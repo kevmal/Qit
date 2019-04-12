@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.28729.10
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Qit", "Qit\Qit.fsproj", "{49167E05-70BC-4881-9ECE-A74A7C5A126F}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Qit.Tests", "Qit.Tests\Qit.Tests.fsproj", "{5A582D81-3B89-4280-A815-43AA726B2E2C}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Qit.CSharp", "Qit.CSharp\Qit.CSharp.fsproj", "{4536C30D-7254-4ED8-B56E-876C38C82F5B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{49167E05-70BC-4881-9ECE-A74A7C5A126F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{49167E05-70BC-4881-9ECE-A74A7C5A126F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{49167E05-70BC-4881-9ECE-A74A7C5A126F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{49167E05-70BC-4881-9ECE-A74A7C5A126F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5A582D81-3B89-4280-A815-43AA726B2E2C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5A582D81-3B89-4280-A815-43AA726B2E2C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5A582D81-3B89-4280-A815-43AA726B2E2C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5A582D81-3B89-4280-A815-43AA726B2E2C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4536C30D-7254-4ED8-B56E-876C38C82F5B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4536C30D-7254-4ED8-B56E-876C38C82F5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4536C30D-7254-4ED8-B56E-876C38C82F5B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4536C30D-7254-4ED8-B56E-876C38C82F5B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {32095B19-AE19-4601-95B0-2268168D990C}
+	EndGlobalSection
+EndGlobal
