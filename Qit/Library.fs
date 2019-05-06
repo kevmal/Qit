@@ -6,6 +6,7 @@ open System.Reflection
 open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open System.Collections.Generic
+open ProviderImplementation.ProvidedTypes
 
 
 module Expression = 
@@ -233,7 +234,23 @@ module UncheckedQuotations =
         | ShapeVarUnchecked(v) -> Expr.Var(v)
 
 
+module Reflection = 
+    let decomposeFSharpFunctionType (t : Type) = 
+        let rec loop (t : Type) acc = 
+            if FSharp.Reflection.FSharpType.IsFunction t then 
+                let d,r = FSharp.Reflection.FSharpType.GetFunctionElements(t)
+                loop r (d :: acc)
+            else
+                List.rev acc, t
+        loop t []
+
 module ReflectionPatterns = 
+
+    let (|FSharpFuncType|_|) (t : Type) = 
+        if FSharp.Reflection.FSharpType.IsFunction t then 
+            Some(Reflection.decomposeFSharpFunctionType t)
+        else
+            None
 
     let inline (|Attribute|_|) (minfo : MemberInfo) : 'a option = 
         let a  = minfo.GetCustomAttribute<'a>() 
@@ -343,6 +360,22 @@ module Quote =
             let nargs = args |> List.map (traverseQuotation f)
             ExprShape.RebuildShapeCombination(a, nargs)
         | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotation f body)
+        | ExprShape.ShapeVar(v) -> Expr.Var(v)
+
+    let rec traverseQuotationUnchecked f q = UncheckedQuotations.traverseQuotation f q
+
+    let rec traverseQuotationRec f q = 
+        let rec loop q = 
+            match f q with 
+            | Some(true,q) -> loop q
+            | Some(false,q) -> q
+            | None -> q
+        let q = loop q
+        match q with
+        | ExprShape.ShapeCombination(a, args) -> 
+            let nargs = args |> List.map (traverseQuotationRec f)
+            ExprShape.RebuildShapeCombination(a, nargs)
+        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotationRec f body)
         | ExprShape.ShapeVar(v) -> Expr.Var(v)
 
     let internal markerMethod = methodInfo <@ any "" @>
@@ -515,6 +548,14 @@ module Quote =
                              |> Array.reduce (&&))
                     ))
         markers, typedMarkers, exprEq a b
+    
+    let internal (|Quote|_|) (e : Expr) (x : Expr) = 
+        let _,_,y = exprMatch e x
+        if y then Some () else None
+
+    let internal (|BindQuote|_|) (e : Expr) (x : Expr) = 
+        let a,b,y = exprMatch e x
+        if y then Some (a,b) else None
 
     //let pipe = getGenericMethodInfo <@(|>)@>
     let rec expand vars expr = 
@@ -699,6 +740,22 @@ module Quote =
         match traverseQuotation [] q with 
         | Choice1Of2 e -> e
         | Choice2Of2(a,b) -> failwithf "Failed to sub %A for %A in %A" a b q
+        
+
+    let rec expandLambda e = 
+        match e with 
+        | Patterns.Application(ExprShape.ShapeLambda(v, body), assign) -> 
+            Expr.Let(v,assign,expandLambda body)
+        | _ -> e
+
+    let decomposeLetBindings e =    
+        let rec loop acc e = 
+            match e with 
+            | Patterns.Let(v,ass,body) -> 
+                loop ((v,ass) :: acc) body
+            | _ -> acc, e
+        loop [] e
+        
 
     open System.Linq.Expressions
 
@@ -778,6 +835,109 @@ module Quote =
             }
         visitor.VisitAndConvert<'e>(e, "expandExpressionSplices")
     
+    let rec exists f (q : Expr) = 
+        if f q then 
+            true
+        else
+            match q with
+            | ShapeCombinationUnchecked(a, args) -> args |> List.exists (exists f)
+            | ShapeLambdaUnchecked(v, body) -> exists f body
+            | ShapeVarUnchecked(v) -> false
+    
+    let rec contains k (q : Expr)  = 
+        match q with
+        | Quote k -> true
+        | ShapeCombinationUnchecked(a, args) -> args |> List.exists (contains k)
+        | ShapeLambdaUnchecked(v, body) -> contains k body
+        | ShapeVarUnchecked(v) -> false
+
+
+    module internal Patterns = 
+
+        let (|MethodCall|_|) (minfo : MethodInfo) = function
+            | Patterns.Call (o, methodInfo, args) when methodInfo.Name = minfo.Name ->
+                if methodInfo.IsGenericMethod then
+                    let generic = methodInfo.GetGenericMethodDefinition() 
+                    if minfo = generic then
+                        let genericArgs = methodInfo.GetGenericArguments ()
+                        Some (o, genericArgs, args)
+                    else
+                        None
+                elif minfo = methodInfo then
+                    Some (o, [||], args)
+                else None
+            | _ -> None
+        let (|PropName|_|) name (p : PropertyInfo) = if p.Name = name then Some() else None
+
+        let (|MethodName|_|) name (p : MethodInfo) = if p.Name = name then Some() else None
+            
+        let (|Quote|_|) (e : Expr) (x : Expr) = 
+            let _,_,y = exprMatch e x
+            if y then Some () else None
+
+        let (|BindQuote|_|) (e : Expr) (x : Expr) = 
+            let a,b,y = exprMatch e x
+            if y then Some (a,b) else None
+
+        let (|AnyMarker|_|) k (anyType : IDictionary<string,Expr>, typed : IDictionary<string,Expr>) = 
+            let scc,v = anyType.TryGetValue k
+            if scc then Some v else None
+        
+        let (|TypedMarker|_|) k (anyType : IDictionary<string,Expr>, typed : IDictionary<string,Expr>) = 
+            let scc,v = typed.TryGetValue k
+            if scc then Some v else None  
+    open Patterns
+    open ProviderImplementation.ProvidedTypes
+    open ReflectionPatterns
+    let compileLambdaWithRefs refs (q : Expr<'a>) = 
+        let refs = 
+            let ra = ResizeArray()
+            q 
+            |> traverseQuotation
+                (fun x ->
+                    match x with
+                    | BindQuote <@ any "x" @> (AnyMarker "x" o) -> ra.Add o.Type.Assembly; None
+                    | _ -> None
+                )
+            |> ignore
+            Seq.append ra refs |> Seq.distinct |> Seq.toArray
+        let asm = ProvidedAssembly()
+        let t = ProvidedTypeDefinition(asm,"ns","tp",Some typeof<obj>,isErased=false)
+        let m, build = 
+            let rec f q (args : Expr list) = 
+                match q,args with 
+                | Lambda(v,body), h :: t -> 
+                    f (body.Substitute(fun x -> if x = v then Some (h) else None)) t
+                | Lambda(_, body), [] -> body
+                | _,[] -> q
+                | _ -> failwithf "Unexpected %A" (q,args)
+            match typeof<'a> with 
+            | FSharpFuncType (d,r) when d.Length = 1 && d.[0] = typeof<unit> -> 
+                ProvidedMethod("meth", [], r, invokeCode = f q, isStatic = true), (fun mt -> Expr.Lambda(Var("", typeof<unit>), Expr.Call(mt, [])))
+            | FSharpFuncType (d,r) ->  
+                let args = d |> List.mapi (fun i t -> ProvidedParameter("p" + string i, t))
+                let vs = args |> List.map (fun a -> Var(a.Name, a.ParameterType))
+                let g mt = 
+                    vs
+                    |> List.foldBack (fun a body -> Expr.Lambda(a,body) )
+                    <| Expr.Call(mt, vs |> List.map Expr.Var)
+                ProvidedMethod("meth", args, r, invokeCode = f q, isStatic = true), g
+            | _ -> 
+                ProvidedMethod("meth", [], typeof<'a>, invokeCode = f q, isStatic = true), (fun mt -> Expr.Lambda(Var("", typeof<unit>), Expr.Call(mt, [])))
+        t.AddMember m
+        asm.AddTypes [t]
+        let ctx = ProvidedTypesContext(refs |> Seq.map (fun x -> x.Location) |> Seq.toList, [], refs |> Seq.toList)//[System.Reflection.Assembly.GetExecutingAssembly()])
+        let t2 = ctx.ConvertSourceProvidedTypeDefinitionToTarget(t)
+        let compiler = AssemblyCompiler(t2.Assembly :?> _, ctx)
+        let bytes = compiler.Compile(false)
+        let a = System.Reflection.Assembly.Load(bytes)
+        let r = a.GetTypes() |> Seq.head
+        let mt = r.GetMethod("meth")
+        FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation(build mt) :?> 'a
+    let compileLambda q = compileLambdaWithRefs [] q
+        
+        
+
 [<AutoOpen>]
 module Extensions =
     open System.Linq.Expressions

@@ -34,6 +34,33 @@ module Patterns =
         let a,b,y = exprMatch e x
         if y then Some (a,b) else None
 
+    let (|InnerQuote|_|) (e : Expr) (x : Expr) = 
+        let rec loop = function
+            | Quote e -> Some()
+            | ExprShape.ShapeCombination(a, args) -> 
+                args |> List.tryPick loop 
+            | ExprShape.ShapeLambda(v, body) -> 
+                loop body
+            | ExprShape.ShapeVar(v) -> None
+        loop x
+        
+    let (|InnerBindQuote|_|) (e : Expr) (x : Expr) = 
+        let rec loop = function
+            | BindQuote e d -> Some d
+            | ExprShape.ShapeCombination(a, args) -> args |> List.tryPick loop 
+            | ExprShape.ShapeLambda(v, body) -> loop body
+            | ExprShape.ShapeVar(v) -> None
+        loop x
+
+    let (|Marker|_|) k (anyType : IDictionary<string,Expr>, typed : IDictionary<string,Expr>) = 
+        let scc,v = anyType.TryGetValue k
+        if scc then Some v else 
+            let scc2,v2 = typed.TryGetValue k
+            if scc2 then 
+                Some v2 
+            else
+                None
+    
     let (|AnyMarker|_|) k (anyType : IDictionary<string,Expr>, typed : IDictionary<string,Expr>) = 
         let scc,v = anyType.TryGetValue k
         if scc then Some v else None

@@ -1,4 +1,4 @@
-﻿namespace Qit.CSharp
+﻿namespace Qit.CSharp2
 
 
 open Qit
@@ -284,13 +284,12 @@ module Internal =
         | Lambda(var1, expr) -> 
             sprintf "((%s %s) => {%s})" (typeStr var1.Type) var1.Name (exs expr) |> parse
         | LetRecursive(varExprList, expr) -> failwith "let rec"
-        //| Let(var, Lambda(v,b), expr2) -> 
         | Let(var, expr1, expr2) ->
             let x = 
                 match rewriteAss var expr1 with 
                 | Some x -> x
                 | None -> expr1
-            sprintf "%s %s = %s; %s;" (typeStr var.Type) var.Name (exs x) (exs expr2) |> parse
+            sprintf "%s %s; %s; %s;" (typeStr var.Type) var.Name (exs x) (exs expr2) |> parse
         | NewArray(type1, exprList) -> 
             sprintf "new[] {%s}" (exprList |> List.map exs |> String.concat  ",") |> parse
         | NewDelegate(type1, varList, expr) -> failwith "NewDelegate(type1, varList, expr)"
@@ -468,7 +467,6 @@ module Quote =
     open Internal
     open Microsoft.FSharp.Quotations
     open Microsoft.CodeAnalysis
-    let rewriteShadowing a = rewriteShadowing a
     let toCSharpString (q : Expr) = 
         (ex q).NormalizeWhitespace().ToFullString() 
     let toFormattedCSharpString (q : Expr) = 
