@@ -339,10 +339,11 @@ module Quote =
 
     let typed (q : Expr) : Expr<'a> = <@ %%q @>
     let untyped (q : Expr<_>) = q.Raw
-    let rec methodInfo q =
+
+    let methodInfo q =
         match q with 
-        | Patterns.Call(_, minfo, _) -> minfo
-        | Patterns.Lambda(_, body) -> methodInfo body
+        | Patterns.Call(_, minfo, _)
+        | DerivedPatterns.Lambdas(_, Patterns.Call(_, minfo, _)) -> minfo
         | x -> failwithf "getMethodInfo: Unexpected form %A" x
 
     let genericMethodInfo q =
@@ -361,6 +362,29 @@ module Quote =
             ExprShape.RebuildShapeCombination(a, nargs)
         | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotation f body)
         | ExprShape.ShapeVar(v) -> Expr.Var(v)
+        
+    //let intoExpr (x : 'a) : Expr = <@@ () @@> //failwith "quoted code to Expr type"
+    let spliceUntyped (x : Expr) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
+    let spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
+    let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
+    let splice2Meth = (methodInfo <@ splice @>).GetGenericMethodDefinition()
+    let expandSpliceOp (expr : Expr) = 
+        let rec loop inSplice expr = 
+            expr
+            |> traverseQuotation
+                (fun q -> 
+                    match q with 
+                    | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = splice2Meth -> 
+                        Some(loop true e |> evaluateUntyped :?> _)
+                    | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = spliceUntypedMeth -> 
+                        Some(loop true e |> evaluateUntyped :?> _)
+                    | Patterns.QuoteRaw q when inSplice -> 
+                        Some(Expr.Value(loop false q))
+                    | Patterns.QuoteTyped q when inSplice -> 
+                        Some(Expr.Value(loop false q))
+                    | _ -> None
+                )
+        loop false expr
 
     let rec traverseQuotationUnchecked f q = UncheckedQuotations.traverseQuotation f q
 

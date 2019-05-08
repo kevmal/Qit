@@ -5,6 +5,7 @@ open Xunit
 open Qit.CSharp
 open System
 open System.Reflection
+open FSharp.Quotations
 
 module Basic = 
     [<Fact>]
@@ -32,7 +33,33 @@ module Basic =
             |> Expression.evaluate
         let v = Assert.IsType<int>(v)
         Assert.Equal(4, v)
+               
+    [<Fact>]
+    let ``splice untyped quote 1``() = 
+        let v = 
+            <@
+                let a = 1
+                let (b : int, c : int) = 
+                    Quote.spliceUntyped ( Expr.NewTuple [ <@@ a + 20 @@>; <@@ a - 20 @@> ] )
+                c,b,c
+            @> 
+            |> Quote.expandSpliceOp
+            |> Quote.evaluateUntyped
+        Assert.Equal((-19, 21, -19), v :?> _)
                 
+    [<Fact>]
+    let ``splice untyped quote 2``() = 
+        let v = 
+            <@
+                let a = 1
+                let (b : int, c : int) = 
+                    Quote.spliceUntyped ( Expr.NewTuple [ <@@ a + Quote.splice <@ 20 @> @@>; <@@ a - 20 @@> ] )
+                c,b,c
+            @> 
+            |> Quote.expandSpliceOp
+            |> Quote.evaluateUntyped
+        Assert.Equal((-19, 21, -19), v :?> _)
+               
 module CSharp =
     open FSharp.Quotations
     open Microsoft.CodeAnalysis.CSharp
