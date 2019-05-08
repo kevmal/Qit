@@ -14148,7 +14148,7 @@ namespace ProviderImplementation.ProvidedTypes
                         let meth = dec.GetMethod meth.Name
                         ilg.Emit(I_call(Normalcall, transMeth meth, None))
                     else
-                        ilg.Emit(I_sub)
+                        ilg.Emit(op)
                         emitConvIfNecessary t1
                     popIfEmptyExpected expectedState
                 match meth.Name with 
@@ -14156,6 +14156,21 @@ namespace ProviderImplementation.ProvidedTypes
                 | "op_Division" -> emit (I_div)
                 | "op_Modulus" -> emit (I_rem)
                 | _ -> emitCallExpr None meth [a1;a2]
+            | Call (None,meth,[a1]) when meth.DeclaringType.FullName = "Microsoft.FSharp.Core.Operators" ->
+                let emit op = 
+                    let t1 = a1.Type
+                    emitExpr ExpectedStackState.Value a1
+                    ilg.Emit(op)
+                    popIfEmptyExpected expectedState
+                match meth.Name with 
+                | "ToInt32" | "ToInt" -> 
+                    match a1.Type.FullName with 
+                    | "System.String" -> emitExpr expectedState <@ Int32.Parse(%%a1) @>
+                    | "System.Int32" -> emitExpr expectedState a1
+                    | _ -> emit (I_conv DT_I4)
+                | "op_Division" -> emit (I_div)
+                | "op_Modulus" -> emit (I_rem)
+                | _ -> emitCallExpr None meth [a1]
             | Call (objOpt,meth,args) -> emitCallExpr objOpt meth args
             | n ->
                 failwithf "unknown expression '%A' in generated method" n
