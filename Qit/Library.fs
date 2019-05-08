@@ -766,6 +766,19 @@ module Quote =
         | Choice2Of2(a,b) -> failwithf "Failed to sub %A for %A in %A" a b q
         
 
+    let rewriter (input : 'input) (f : Expr list -> Expr -> Expr -> (Expr*Expr) option) : 'a = Unchecked.defaultof<'a>
+    let internal rewriterMeth = (methodInfo <@ rewriter @>).GetGenericMethodDefinition()
+    let expandRewriters (expr : Expr) = 
+        expr
+        |> applySub
+            (fun trail e ->
+                match e with
+                | Patterns.Call(None, m, [inp; f]) when m.IsGenericMethod && m.GetGenericMethodDefinition() = rewriterMeth -> 
+                    let f : Expr list -> Expr -> Expr -> (Expr*Expr) option =  evaluateUntyped f :?> _
+                    f trail e inp 
+                | _ -> None
+            )
+
     let rec expandLambda e = 
         match e with 
         | Patterns.Application(ExprShape.ShapeLambda(v, body), assign) -> 

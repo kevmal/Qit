@@ -60,6 +60,30 @@ module Basic =
             |> Quote.evaluateUntyped
         Assert.Equal((-19, 21, -19), v :?> _)
                
+    [<Fact>]
+    let ``rewriter 1``() = 
+        let v = 
+            <@
+                let a = 1
+                let b = Quote.rewriter (11) (fun trail thisCall eleven -> Some(thisCall, <@@ Quote.spliceUntyped eleven + 2 @@> |> Quote.expandSpliceOp))
+                b + 2
+            @> 
+            |> Quote.expandRewriters
+            |> Quote.evaluateUntyped
+        Assert.Equal(15, v :?> _)
+    [<Fact>]
+    let ``rewriter 2``() = 
+        let v = 
+            <@
+                let a = 1
+                let b : int*int = (11, Quote.rewriter (11) (fun (_ :: createTuple :: _t) _ eleven -> Some(createTuple, <@@ (22, (Quote.spliceUntyped eleven : int)) @@> |> Quote.expandSpliceOp)))
+                b
+            @> 
+            |> Quote.expandRewriters
+            |> Quote.evaluateUntyped
+        Assert.Equal((22,11), v :?> _)
+               
+               
 module CSharp =
     open FSharp.Quotations
     open Microsoft.CodeAnalysis.CSharp
