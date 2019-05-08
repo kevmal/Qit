@@ -10,4 +10,8 @@
     <Compile Include="Patterns.fs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="FSharp.Quotations.Evaluator" Version="1.1.3" />
+  </ItemGroup>
+
 </Project>
