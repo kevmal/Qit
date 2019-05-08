@@ -8,7 +8,6 @@ open Microsoft.FSharp.Quotations.Patterns
 open System.Collections.Generic
 open ProviderImplementation.ProvidedTypes
 
-
 module Expression = 
     open System.Linq.Expressions
     let evaluate (e : Expression) = 
@@ -323,10 +322,13 @@ type IHole<'a> =
     inherit IHole
     abstract member Marker : 'a
 
+open FSharp.Quotations.Evaluator.QuotationEvaluationExtensions
 module Quote =
     let toExpression (q : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression q  
-    let evaluate(q : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q :?> 'a  
-    let evaluateUntyped(q : Expr) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q
+    let evaluate(q : Expr<'a>) = q.Evaluate()
+        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q :?> 'a  
+    let evaluateUntyped(q : Expr) = q.EvaluateUntyped()
+        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q
     let inline hole f = 
         {new IHole<'a> with
              member this.Action(arg2: Expr list, arg3: Expr): Expr*Expr = 
@@ -385,6 +387,7 @@ module Quote =
                     | _ -> None
                 )
         loop false expr
+
 
     let rec traverseQuotationUnchecked f q = UncheckedQuotations.traverseQuotation f q
 
@@ -793,7 +796,6 @@ module Quote =
             | _ -> acc, e
         loop [] e
         
-
     open System.Linq.Expressions
 
     let toFuncExpression (x : Expr<'a>) = 
