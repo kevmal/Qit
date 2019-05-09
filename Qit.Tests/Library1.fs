@@ -3,6 +3,7 @@ open Qit
 open System.Linq.Expressions
 open Xunit
 open Qit.CSharp
+open Qit.Operators
 open System
 open System.Reflection
 open FSharp.Quotations
@@ -40,10 +41,10 @@ module Basic =
             <@
                 let a = 1
                 let (b : int, c : int) = 
-                    Quote.spliceUntyped ( Expr.NewTuple [ <@@ a + 20 @@>; <@@ a - 20 @@> ] )
+                    !%%(Expr.NewTuple [ <@@ a + 20 @@>; <@@ a - 20 @@> ])
                 c,b,c
             @> 
-            |> Quote.expandSpliceOp
+            |> Quote.expandOperators
             |> Quote.evaluateUntyped
         Assert.Equal((-19, 21, -19), v :?> _)
                 
@@ -53,19 +54,63 @@ module Basic =
             <@
                 let a = 1
                 let (b : int, c : int) = 
-                    Quote.spliceUntyped ( Expr.NewTuple [ <@@ a + Quote.splice <@ 20 @> @@>; <@@ a - 20 @@> ] )
+                    !%%( Expr.NewTuple [ <@@ a + !%(<@ 20 @>) @@>; <@@ a - 20 @@> ] )
                 c,b,c
             @> 
-            |> Quote.expandSpliceOp
+            |> Quote.expandOperators
             |> Quote.evaluateUntyped
         Assert.Equal((-19, 21, -19), v :?> _)
-               
+        
+    [<Fact>]
+    let ``splice typed quote 1``() = 
+        let v = 
+            <@
+                let a = 1
+                let b,c = 
+                    !%(Expr.NewTuple [ <@@ a + 20 @@>; <@@ a - 20 @@> ] |> Expr.Cast<int*int>)
+                c,b,c
+            @> 
+            |> Quote.expandOperators
+            |> Quote.evaluateUntyped
+        Assert.Equal((-19, 21, -19), v :?> _)
+                
+    [<Fact>]
+    let ``splice typed quote 2``() = 
+        let v = 
+            <@
+                let a = 1
+                let b, c = 
+                    !%( Expr.NewTuple [ <@@ a + !%(<@ 20 @>) @@>; <@@ a - 20 @@> ] |> Expr.Cast<int*int> )
+                c,b,c
+            @> 
+            |> Quote.expandOperators
+            |> Quote.evaluateUntyped
+        Assert.Equal((-19, 21, -19), v :?> _)
+
+    [<Fact>]
+    let ``staging 1``() = 
+        let rec spower (n : int) : Expr<int> -> Expr<int> =
+            if n = 0 then fun _ -> <@ 1 @>
+            elif n = 1 then fun t -> <@ %t @>
+            else fun x -> <@ %x * (%spower (n-1) x) @>
+        let lift (stagedComp : Expr<'T> -> Expr<'S>) : Expr<'T -> 'S> =
+            <@ fun (t:'T) -> !% (stagedComp <@ t @>) @>
+        let f = spower 10 |> lift |> Quote.expandOperators |> Quote.evaluate
+        Assert.Equal(pown 2 10, f 2)
+        Assert.Equal(1, f 1)
+        let one = spower 0 |> lift |> Quote.expandOperators
+        match one with 
+        | Patterns.Lambda(v,e) -> 
+            Assert.Equal(<@@ 1 @@>, e)
+        | _ -> Assert.Equal(<@@ fun t -> 1 @@>.ToString(), one.ToString())
+
+(*               
     [<Fact>]
     let ``rewriter 1``() = 
         let v = 
             <@
                 let a = 1
-                let b = Quote.rewriter (11) (fun trail thisCall eleven -> Some(thisCall, <@@ Quote.spliceUntyped eleven + 2 @@> |> Quote.expandSpliceOp))
+                let b = Quote.rewriter (11) (fun trail thisCall eleven -> Some(thisCall, <@@ !%%eleven + 2 @@> |> Quote.expandOperators))
                 b + 2
             @> 
             |> Quote.expandRewriters
@@ -76,13 +121,18 @@ module Basic =
         let v = 
             <@
                 let a = 1
-                let b : int*int = (11, Quote.rewriter (11) (fun (_ :: createTuple :: _t) _ eleven -> Some(createTuple, <@@ (22, (Quote.spliceUntyped eleven : int)) @@> |> Quote.expandSpliceOp)))
+                let b : int*int = 
+                    (11, Quote.rewriter (11) 
+                        (fun l _ eleven -> 
+                            match l with 
+                            | (_ :: createTuple :: _t) -> Some(createTuple, <@@ (22, (!%%eleven : int)) @@> |> Quote.expandOperators)
+                            | _ -> failwith "no"))
                 b
             @> 
             |> Quote.expandRewriters
             |> Quote.evaluateUntyped
         Assert.Equal((22,11), v :?> _)
-               
+*)               
                
 module CSharp =
     open FSharp.Quotations
@@ -207,7 +257,7 @@ a__1 + b;""", e)
             @> |> Quote.rewriteShadowing
         Assert.Equal(103, eval q :?> int)
     
-    [<Fact>]
+    [<Fact(Skip="need to properly support lambdas")>] 
     let ``shadowing 4``() = 
         let q = 
             <@ 

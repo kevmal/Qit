@@ -278,57 +278,140 @@ module ReflectionPatterns =
 
 type AnyType = class end 
 
-module Operators = 
-    
-    type Splice() = class end
-        //static member Var
+
+module internal Core = 
+    open FSharp.Quotations.Evaluator.QuotationEvaluationExtensions
+    let internal methodInfo q =
+        match q with 
+        | Patterns.Call(_, minfo, _)
+        | DerivedPatterns.Lambdas(_, Patterns.Call(_, minfo, _)) -> minfo
+        | x -> failwithf "getMethodInfo: Unexpected form %A" x
+
+    let genericMethodInfo q =
+        let methodInfo = methodInfo q
+        if methodInfo.IsGenericMethod then
+            methodInfo.GetGenericMethodDefinition()
+        else
+            methodInfo
 
 
-    let spliceVar (o : 'a) (v : Var) (e : Expr) : 'r = failwith "spliceVar"
-
-    let spliceInto (v : 'a) (f : (Expr -> Expr)) : 'b = failwith "spliceInto"
-    let splice2Into (a : 'a) (b : 'b) (f : (Expr -> Expr -> Expr)) : 'c = failwith "splice2Into"
-    let splice3Into (a : 'a) (b : 'b) (c : 'c) (f : (Expr -> Expr -> Expr -> Expr)) : 'd = failwith "splice3Into"
-    let splice (e : Expr) : 'b = failwith "spliceInto"
-
-    [<ReflectedDefinition>]
-    let fieldGet (field : FieldInfo) (o : 'a) : 'b = 
-        spliceInto o (fun o -> Expr.FieldGetUnchecked(o,field))
-    [<ReflectedDefinition>]
-    let fieldGetStatic (field : FieldInfo) : 'a = 
-        splice (Expr.FieldGetUnchecked(field))
-    [<ReflectedDefinition>]
-    let fieldSet (field : FieldInfo) (value : 'a) (o : 'b) : unit =
-        spliceInto o
-            (fun o ->
-                spliceInto value 
-                    (fun value -> 
-                        Expr.FieldSetUnchecked(o,field,value))
-            )
-
-    [<ReflectedDefinition>]
-    let fieldSetStatic (field : FieldInfo) (value : 'a) : unit = 
-        spliceInto value (fun value -> Expr.FieldSetUnchecked(field,value)) 
+    let castMeth = typeof<Expr>.GetMethod("Cast")
+    let internal toTypedExpr (e : Expr) = 
+        let t = e.Type
+        castMeth.MakeGenericMethod(t).Invoke(null, [|e|])
         
-    [<ReflectedDefinition>]
+
+    let rec internal rewriteNestedQuotes x =
+        match x with
+        | Patterns.QuoteTyped e -> typeof<Expr>.GetMethod("Value").MakeGenericMethod(x.Type).Invoke(null, [|toTypedExpr e|]) :?> Expr
+        | Patterns.QuoteRaw e -> Expr.Value(e)
+        | ExprShape.ShapeCombination(a, args) -> 
+            let nargs = args |> List.map rewriteNestedQuotes
+            ExprShape.RebuildShapeCombination(a, nargs)
+        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, rewriteNestedQuotes body)
+        | ExprShape.ShapeVar(v) -> Expr.Var(v)
+        
+    let evaluate(q : Expr<'a>) = 
+        //(rewriteNestedQuotes q |> Expr.Cast<'a>)
+        q.Evaluate()
+        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q :?> 'a  
+    let evaluateUntyped(q : Expr) = 
+        //let q2 = (rewriteNestedQuotes q)
+        q.EvaluateUntyped()
+        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q
+
+    let rec applySub f q = 
+        let rec traverseQuotation acc0 q = 
+            let (|Q|_|) q : (Expr*Expr) option = f acc0 q 
+            let path = q :: acc0
+            match q with
+            | Q(a,b) -> 
+                if Object.ReferenceEquals(a,q) then 
+                    Choice1Of2 b
+                else
+                    Choice2Of2(a,b)
+            | ExprShape.ShapeCombination(a, args) -> 
+                let rec loop xs acc = 
+                    match xs with 
+                    | h :: t -> 
+                        match traverseQuotation path h with 
+                        | Choice1Of2(e) -> loop t (e :: acc)
+                        | Choice2Of2(a,b) when Object.ReferenceEquals(a,h) -> loop t (b :: acc)
+                        | x -> Choice2Of2 x
+                    | [] -> 
+                        Choice1Of2(List.rev acc)
+                match loop args [] with 
+                | Choice1Of2 nargs ->
+                    Choice1Of2(ExprShape.RebuildShapeCombination(a, nargs))
+                | Choice2Of2(Choice2Of2(a,b)) when Object.ReferenceEquals(a,q) -> 
+                    Choice1Of2(b)
+                | Choice2Of2 sub -> sub
+            | ExprShape.ShapeLambda(v, body) -> 
+                match traverseQuotation path body with 
+                | Choice1Of2 e -> Expr.Lambda(v, e) |> Choice1Of2
+                | Choice2Of2(a,b) when Object.ReferenceEquals(a,body) -> Expr.Lambda(v, b) |> Choice1Of2
+                | x -> x
+            | ExprShape.ShapeVar(v) -> Expr.Var(v) |> Choice1Of2
+        match traverseQuotation [] q with 
+        | Choice1Of2 e -> e
+        | Choice2Of2(a,b) -> failwithf "Failed to sub %A for %A in %A" a b q
+
+    //http://www.fssnip.net/1i/title/Traverse-quotation
+    let rec traverseQuotation f q = 
+        let q = defaultArg (f q) q
+        match q with
+        | ExprShape.ShapeCombination(a, args) -> 
+            let nargs = args |> List.map (traverseQuotation f)
+            ExprShape.RebuildShapeCombination(a, nargs)
+        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotation f body)
+        | ExprShape.ShapeVar(v) -> Expr.Var(v)
+                
+open Core
+    
+
+type QitOpAttribute() = inherit Attribute()
+
+open ReflectionPatterns
+module Operators = 
+    let spliceUntyped (x : Expr) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
+    let spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
+    let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
+    let splice2Meth = (methodInfo <@ splice @>).GetGenericMethodDefinition()
+    [<ReflectedDefinition; QitOp>]
+    let (!%) x = splice x
+    [<ReflectedDefinition; QitOp>]
+    let (!%%) x = spliceUntyped x
+
+    let rewriter (input : 'input) (f : Expr list -> Expr -> Expr -> (Expr*Expr) option) : 'a = Unchecked.defaultof<'a>
+    let internal rewriterMeth = (methodInfo <@ rewriter @>).GetGenericMethodDefinition()
+
+    [<ReflectedDefinition; QitOp>]
+    let fieldGet (field : FieldInfo) (o : 'a) : 'b = !%%(Expr.FieldGet(<@ o @>,field))
+    [<ReflectedDefinition; QitOp>]
+    let fieldGetStatic (field : FieldInfo) : 'a = !%%(Expr.FieldGet(field))
+    [<ReflectedDefinition; QitOp>]
+    let fieldSet (field : FieldInfo) (value : 'a) (o : 'b) : unit =
+        !%%(Expr.FieldSet(<@o@>,field,<@value@>))
+    [<ReflectedDefinition; QitOp>]
+    let fieldSetStatic (field : FieldInfo) (value : 'a) : unit = 
+        !%%(Expr.FieldSet(field,<@value@>))
+    [<ReflectedDefinition; QitOp>]
     let methodCall (method : MethodInfo) (args : obj list) (o : 'a) : 'b = failwith "methodCall"
-    [<ReflectedDefinition>]
+    [<ReflectedDefinition; QitOp>]
     let methodCallStatic (method : MethodInfo) (args : obj list) : 'c  = failwith "methodCall"
     
 
 type IHole = 
     abstract member Action : Expr list * Expr -> Expr*Expr
+
 type IHole<'a> = 
     inherit IHole
     abstract member Marker : 'a
-
-open FSharp.Quotations.Evaluator.QuotationEvaluationExtensions
+open  Operators
 module Quote =
     let toExpression (q : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression q  
-    let evaluate(q : Expr<'a>) = q.Evaluate()
-        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q :?> 'a  
-    let evaluateUntyped(q : Expr) = q.EvaluateUntyped()
-        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q
+    let evaluate(q : Expr<'a>) = evaluate q
+    let evaluateUntyped(q : Expr) = evaluateUntyped q 
     let inline hole f = 
         {new IHole<'a> with
              member this.Action(arg2: Expr list, arg3: Expr): Expr*Expr = 
@@ -342,51 +425,59 @@ module Quote =
     let typed (q : Expr) : Expr<'a> = <@ %%q @>
     let untyped (q : Expr<_>) = q.Raw
 
-    let methodInfo q =
-        match q with 
-        | Patterns.Call(_, minfo, _)
-        | DerivedPatterns.Lambdas(_, Patterns.Call(_, minfo, _)) -> minfo
-        | x -> failwithf "getMethodInfo: Unexpected form %A" x
+    let methodInfo q = methodInfo q
 
-    let genericMethodInfo q =
-        let methodInfo = methodInfo q
-        if methodInfo.IsGenericMethod then
-            methodInfo.GetGenericMethodDefinition()
-        else
-            methodInfo
+    let genericMethodInfo q = genericMethodInfo q
 
-    //http://www.fssnip.net/1i/title/Traverse-quotation
-    let rec traverseQuotation f q = 
-        let q = defaultArg (f q) q
-        match q with
-        | ExprShape.ShapeCombination(a, args) -> 
-            let nargs = args |> List.map (traverseQuotation f)
-            ExprShape.RebuildShapeCombination(a, nargs)
-        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotation f body)
-        | ExprShape.ShapeVar(v) -> Expr.Var(v)
-        
-    //let intoExpr (x : 'a) : Expr = <@@ () @@> //failwith "quoted code to Expr type"
-    let spliceUntyped (x : Expr) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
-    let spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
-    let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
-    let splice2Meth = (methodInfo <@ splice @>).GetGenericMethodDefinition()
-    let expandSpliceOp (expr : Expr) = 
+    let applySub f q = applySub f q
+    let traverseQuotation f q = traverseQuotation f q
+
+    let expandOperatorsUntyped (expr : Expr) = 
         let rec loop inSplice expr = 
             expr
             |> traverseQuotation
                 (fun q -> 
                     match q with 
+                    | Patterns.Call(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.MethodWithReflectedDefinition(meth), args) -> 
+                        let this = match o with Some b -> Expr.Application(meth, b) | _ -> meth
+                        let res = Expr.Applications(this, [ for a in args -> [a]])
+                        let rec expandLambda e : Expr = 
+                            match e with 
+                            | Patterns.Application(ExprShape.ShapeLambda(v, body), assign) -> 
+                                (expandLambda body).Substitute(fun i -> if i = v then Some assign else None)
+                            | _ -> e
+                        expandLambda res 
+                        |> loop inSplice 
+                        |> Some
                     | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = splice2Meth -> 
-                        Some(loop true e |> evaluateUntyped :?> _)
+                        Some(loop true e |> evaluateUntyped :?> Expr)
                     | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = spliceUntypedMeth -> 
                         Some(loop true e |> evaluateUntyped :?> _)
                     | Patterns.QuoteRaw q when inSplice -> 
                         Some(Expr.Value(loop false q))
-                    | Patterns.QuoteTyped q when inSplice -> 
-                        Some(Expr.Value(loop false q))
+                    | Patterns.QuoteTyped q2 when inSplice -> 
+                        let expr = loop false q2
+                        let expr = typeof<Expr>.GetMethod("Cast").MakeGenericMethod(q2.Type).Invoke(null, [|expr|])
+                        Some(Expr.Value(expr, q.Type))
                     | _ -> None
                 )
         loop false expr
+    
+    let expandOperators (expr : Expr<'a>) : Expr<'a> =
+        expr |> expandOperatorsUntyped |> Expr.Cast
+
+    let expandRewriters (expr : Expr) = 
+        expr
+        |> applySub
+            (fun trail e ->
+                match e with
+                | Patterns.Call(None, m, [inp; f]) when m.IsGenericMethod && m.GetGenericMethodDefinition() = rewriterMeth -> 
+                    let f : Expr list -> Expr -> Expr -> (Expr*Expr) option =  evaluateUntyped f :?> _
+                    f trail e inp 
+                | _ -> None
+            )
+
+    //let intoExpr (x : 'a) : Expr = <@@ () @@> //failwith "quoted code to Expr type"
 
 
     let rec traverseQuotationUnchecked f q = UncheckedQuotations.traverseQuotation f q
@@ -730,57 +821,6 @@ module Quote =
             sprintf "(while (%s) do (%s))" (str expr1) (str expr2)
         | x -> failwithf "%A" x
 
-
-
-    let rec applySub f q = 
-        let rec traverseQuotation acc0 q = 
-            let (|Q|_|) q : (Expr*Expr) option = f acc0 q 
-            let path = q :: acc0
-            match q with
-            | Q(a,b) -> 
-                if Object.ReferenceEquals(a,q) then 
-                    Choice1Of2 b
-                else
-                    Choice2Of2(a,b)
-            | ExprShape.ShapeCombination(a, args) -> 
-                let rec loop xs acc = 
-                    match xs with 
-                    | h :: t -> 
-                        match traverseQuotation path h with 
-                        | Choice1Of2(e) -> loop t (e :: acc)
-                        | Choice2Of2(a,b) when Object.ReferenceEquals(a,h) -> loop t (b :: acc)
-                        | x -> Choice2Of2 x
-                    | [] -> 
-                        Choice1Of2(List.rev acc)
-                match loop args [] with 
-                | Choice1Of2 nargs ->
-                    Choice1Of2(ExprShape.RebuildShapeCombination(a, nargs))
-                | Choice2Of2(Choice2Of2(a,b)) when Object.ReferenceEquals(a,q) -> 
-                    Choice1Of2(b)
-                | Choice2Of2 sub -> sub
-            | ExprShape.ShapeLambda(v, body) -> 
-                match traverseQuotation path body with 
-                | Choice1Of2 e -> Expr.Lambda(v, e) |> Choice1Of2
-                | Choice2Of2(a,b) when Object.ReferenceEquals(a,body) -> Expr.Lambda(v, b) |> Choice1Of2
-                | x -> x
-            | ExprShape.ShapeVar(v) -> Expr.Var(v) |> Choice1Of2
-        match traverseQuotation [] q with 
-        | Choice1Of2 e -> e
-        | Choice2Of2(a,b) -> failwithf "Failed to sub %A for %A in %A" a b q
-        
-
-    let rewriter (input : 'input) (f : Expr list -> Expr -> Expr -> (Expr*Expr) option) : 'a = Unchecked.defaultof<'a>
-    let internal rewriterMeth = (methodInfo <@ rewriter @>).GetGenericMethodDefinition()
-    let expandRewriters (expr : Expr) = 
-        expr
-        |> applySub
-            (fun trail e ->
-                match e with
-                | Patterns.Call(None, m, [inp; f]) when m.IsGenericMethod && m.GetGenericMethodDefinition() = rewriterMeth -> 
-                    let f : Expr list -> Expr -> Expr -> (Expr*Expr) option =  evaluateUntyped f :?> _
-                    f trail e inp 
-                | _ -> None
-            )
 
     let rec expandLambda e = 
         match e with 
