@@ -432,12 +432,25 @@ module Quote =
     let applySub f q = applySub f q
     let traverseQuotation f q = traverseQuotation f q
 
+    let replaceVar v1 v2 e =
+        e
+        |> traverseQuotation
+            (fun q -> 
+                match q with 
+                | Patterns.Var(v) when v = v1 -> Some(v2)
+                | _ -> None
+            )
+
     let expandOperatorsUntyped (expr : Expr) = 
         let rec loop inSplice expr = 
             expr
             |> traverseQuotation
                 (fun q -> 
                     match q with 
+                    | Patterns.Let(v,e,b) when inSplice -> 
+                        b.Substitute(fun i -> if i = v then Some(e) else None)
+                        |> loop inSplice 
+                        |> Some
                     | Patterns.Call(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.MethodWithReflectedDefinition(meth), args) -> 
                         let this = match o with Some b -> Expr.Application(meth, b) | _ -> meth
                         let res = Expr.Applications(this, [ for a in args -> [a]])
@@ -450,9 +463,18 @@ module Quote =
                         |> loop inSplice 
                         |> Some
                     | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = splice2Meth -> 
-                        Some(loop true e |> evaluateUntyped :?> Expr)
+                        let q = loop true e
+                        Some(q |> evaluateUntyped :?> Expr)
                     | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = spliceUntypedMeth -> 
-                        Some(loop true e |> evaluateUntyped :?> _)
+                        let q = loop true e
+                        Some(q |> evaluateUntyped :?> _)
+                    | Patterns.Let(v, q, b) when inSplice && v.Type = typeof<Expr> ->
+                        let expr = loop true q |> evaluateUntyped :?> Expr
+                        Some(b.Substitute(fun i -> if i = v then Some (Expr.Value expr) else None) |> loop true)
+                    | Patterns.Let(v, q, b) when inSplice && v.Type.IsGenericType && v.Type.GetGenericTypeDefinition() = typedefof<Expr<_>> ->
+                        let expr = loop true q |> evaluateUntyped :?> Expr
+                        let expr = typeof<Expr>.GetMethod("Cast").MakeGenericMethod(v.Type.GetGenericArguments().[0]).Invoke(null, [|expr|])
+                        Some(b.Substitute(fun i -> if i = v then Some (Expr.Value(expr, v.Type)) else None) |> loop true)
                     | Patterns.QuoteRaw q when inSplice -> 
                         Some(Expr.Value(loop false q))
                     | Patterns.QuoteTyped q2 when inSplice -> 

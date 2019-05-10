@@ -103,6 +103,61 @@ module Basic =
         | Patterns.Lambda(v,e) -> 
             Assert.Equal(<@@ 1 @@>, e)
         | _ -> Assert.Equal(<@@ fun t -> 1 @@>.ToString(), one.ToString())
+        
+    [<Fact>]
+    let ``splice in splice 1``() = 
+        let a = 
+            <@ 
+                splice
+                    (
+                        let x = <@ 32 @>
+                        <@
+                            !%x
+                        @>
+                    )
+            @>
+        let v = a |> Quote.expandOperators |> Quote.evaluate
+        Assert.Equal(32, v)
+
+    [<ReflectedDefinition>]
+    let (|TryExprValue|_|) (e : Expr<'a>) : 'a option = 
+        try 
+            Quote.evaluate e |> Some
+        with 
+        | _ -> None
+
+    [<ReflectedDefinition; QitOp>]
+    let spliceTestFunc lag = 
+        splice 
+            (
+                match <@ lag @> with 
+                | TryExprValue p -> 
+                    let e = 
+                        if p = 0 then 
+                            <@ 
+                                printfn "poo1"
+                            @>
+                        else 
+                            <@
+                                printfn "poo2"
+                            @>
+                    <@
+                        !%e
+                        printfn "poo"
+                        1
+                    @>
+                | _ -> 
+                    <@
+                        if lag > 0 then 
+                            ()
+                        2
+                    @>
+            )        
+    [<Fact>]
+    let ``splice in splice 2``() = 
+        let a = <@ spliceTestFunc 1 @>
+        let v = a |> Quote.expandOperators |> Quote.evaluate
+        Assert.Equal(1, v)
 
 (*               
     [<Fact>]
