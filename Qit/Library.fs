@@ -665,7 +665,9 @@ module Quote =
         and varEq (a : Var) (b : Var) = 
             typeEq a.Type b.Type && (a.Name = b.Name || a.Name.StartsWith "__" || b.Name.StartsWith "__") && a.IsMutable = b.IsMutable
         and typeEq (a : Type) (b : Type) = 
-            if a.IsGenericType && b.IsGenericType then 
+            if a.IsArray && b.IsArray then 
+                typeEq (a.GetElementType()) (b.GetElementType())
+            elif a.IsGenericType && b.IsGenericType then 
                 a.GetGenericTypeDefinition() = b.GetGenericTypeDefinition() &&
                     (Array.map2 typeEq (a.GetGenericArguments()) (b.GetGenericArguments())
                      |> Array.fold (&&) true)
@@ -675,18 +677,41 @@ module Quote =
             a = b || 
                 (typeEq a.DeclaringType b.DeclaringType && a.Name = b.Name && typeEq a.PropertyType b.PropertyType)
         and methEq (a : MethodInfo) (b : MethodInfo) = 
-            a = b || 
-                (a.IsGenericMethod && b.IsGenericMethod && a.GetGenericMethodDefinition() = b.GetGenericMethodDefinition() &&
-                    (
-                        let args1 = a.GetGenericArguments()
-                        let args2 = b.GetGenericArguments()
-                        args1.Length = args2.Length &&
-                            (Array.map2 
-                                (fun x1 x2 ->
-                                    x1 = typeof<AnyType> || x2 = typeof<AnyType> || x1 = x2
-                                ) args1 args2
-                             |> Array.reduce (&&))
-                    ))
+            let genArgsEq() =
+                let args1 = a.GetGenericArguments()
+                let args2 = b.GetGenericArguments()
+                args1.Length = args2.Length &&
+                    ((args1, args2) 
+                     ||> Seq.map2 typeEq 
+                     |> Seq.contains false 
+                     |> not )
+            let checkGenericType() =
+                if a.DeclaringType.IsGenericType && b.DeclaringType.IsGenericType then   
+                    let adef = a.DeclaringType.GetGenericTypeDefinition()
+                    let bdef = b.DeclaringType.GetGenericTypeDefinition()
+                    if adef = bdef then
+                        let nameEq() = a.Name = b.Name
+                        let returnEq() = typeEq a.ReturnType b.ReturnType
+                        let paramTpsEq() = 
+                            let p1 = a.GetParameters()
+                            let p2 = b.GetParameters()
+                            p1.Length = p2.Length 
+                            &&
+                                (
+                                    (p1, p2)
+                                    ||> Seq.map2 (fun a b -> a.Name = b.Name && typeEq a.ParameterType b.ParameterType)
+                                    |> Seq.contains false
+                                    |> not
+                                )
+                        genArgsEq() && nameEq() && returnEq() && paramTpsEq()
+                    else
+                        false
+                else
+                    false
+                        
+            a = b 
+                || (a.IsGenericMethod && b.IsGenericMethod && a.GetGenericMethodDefinition() = b.GetGenericMethodDefinition() && genArgsEq())
+                || checkGenericType()
         markers, typedMarkers, exprEq a b
     
     let internal (|Quote|_|) (e : Expr) (x : Expr) = 

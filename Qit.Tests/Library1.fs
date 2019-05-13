@@ -9,6 +9,7 @@ open System.Reflection
 open FSharp.Quotations
 
 module Basic = 
+    open Qit.Patterns
     [<Fact>]
     let spliceInExpression1() = 
         let e = Quote.toExpression <@ 1 + 2 + 3 @>
@@ -158,6 +159,65 @@ module Basic =
         let a = <@ spliceTestFunc 1 @>
         let v = a |> Quote.expandOperators |> Quote.evaluate
         Assert.Equal(1, v)
+        
+    [<Fact>]
+    let ``BindQuote any instance obj 1``() = 
+        let a = <@ ResizeArray([2.0]).Add(2.0) @>
+        match a with 
+        | BindQuote <@ (Quote.withType "x" : ResizeArray<AnyType>).Add(Quote.any "v") @> (Marker "x" x & Marker "v" v) ->
+            Assert.Equal(<@@ 2.0 @@>,v)
+        | _ -> Assert.False(true)
+
+    [<Fact>]
+    let ``BindQuote any instance obj 2``() = 
+        let a = <@ ResizeArray([2.0]).[0] @>
+        match a with 
+        | BindQuote <@ (Quote.withType "x" : ResizeArray<AnyType>).[Quote.withType "i"] : AnyType @> (Marker "x" x & Marker "i" i) ->
+            Assert.Equal(<@@ 0 @@>, i)
+        | _ -> Assert.False(true)
+        
+    // This was an error from not checking array types and only checking generic types. This could be simplified
+    type ConcatBuilder<'a>() =
+        member x.Yield(v : 'a) = [|v|]
+        member x.Yield(v : 'a []) = v
+        member x.Combine(a, b) = Array.append a b
+        member x.Delay(f) : 'a [] = f()
+    [<Fact>]
+    let ``BindQuote any instance obj 3``() = 
+        let a = <@ ConcatBuilder<int>() {yield 1} @>
+        let a0 = 
+            match a with
+            | Patterns.Application(Patterns.Lambda(_,f),_) -> f
+            | _ -> failwith "never"
+        match a0 with 
+        | BindQuote <@ (Quote.withType "x" : ConcatBuilder<AnyType>).Delay(Quote.withType "body") : AnyType []@> (Marker "x" x & Marker "body" b) ->
+            ()
+        | _ -> Assert.False(true)
+
+    //REVIEW: Should we just always match unit variables? 
+    [<Fact>]
+    let ``BindQuote unit lambda 1``() = 
+        let a = <@ ConcatBuilder<int>() {yield 1} @>
+        let a0 = 
+            match a with
+            | Patterns.Application(Patterns.Lambda(_,f),_) -> f
+            | _ -> failwith "never"
+        match a0 with 
+        | BindQuote <@ (Quote.withType "x" : ConcatBuilder<AnyType>).Delay(fun (__unitvar : unit) -> Quote.withType "body") : AnyType []@> (Marker "x" x & Marker "body" b) ->
+            ()
+        | _ -> Assert.False(true)
+
+        
+        
+    [<Fact>]
+    let ``BindQuote unit lambda 2``() = 
+        let a = <@ fun () -> 1@>
+        match a with 
+        | BindQuote <@ fun () -> Quote.any "x" @> (Marker "x" x) ->
+            Assert.Equal(<@@ 1 @@>, x)
+        | _ -> Assert.False(true)
+
+
 
 (*               
     [<Fact>]
