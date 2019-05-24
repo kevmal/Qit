@@ -6,6 +6,7 @@ open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open System.Collections.Generic
 
+[<AutoOpen>]
 module Patterns = 
     open Quote
 
