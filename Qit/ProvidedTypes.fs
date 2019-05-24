@@ -13709,14 +13709,19 @@ namespace ProviderImplementation.ProvidedTypes
         let dateTimeOffsetConstructor() = (convTypeToTgt typeof<DateTimeOffset>).GetConstructor([| typeof<int64>; typeof<TimeSpan> |])
         let timeSpanConstructor() = (convTypeToTgt typeof<TimeSpan>).GetConstructor([|typeof<int64>|])
 
-        let (|SpecificCallTgt|_|) templateParameter = 
+        let (|SpecificCall|_|) templateParameter = 
             // Note: precomputation
             match templateParameter with
             | (Lambdas(_, Call(_, minfo1, _)) | Call(_, minfo1, _)) ->
                 let targetType = convTypeToTgt minfo1.DeclaringType
                 let minfo1 = targetType.GetMethod(minfo1.Name, bindAll)
                 let isg1 = minfo1.IsGenericMethod
-                let gmd = if isg1 then minfo1.GetGenericMethodDefinition() else null
+                let gmd = 
+                    if minfo1.IsGenericMethodDefinition then 
+                        minfo1
+                    elif isg1 then 
+                        minfo1.GetGenericMethodDefinition() 
+                    else null
 
                 // end-of-precomputation
 
@@ -14156,6 +14161,19 @@ namespace ProviderImplementation.ProvidedTypes
                 | "op_Division" -> emit (I_div)
                 | "op_Modulus" -> emit (I_rem)
                 | _ -> emitCallExpr None meth [a1;a2]
+            | Call (None,meth,[a1]) when meth.DeclaringType.FullName = "Microsoft.FSharp.Core.ExtraTopLevelOperators" ->
+                let emit op = 
+                    let t1 = a1.Type
+                    emitExpr ExpectedStackState.Value a1
+                    ilg.Emit(op)
+                    popIfEmptyExpected expectedState
+                match meth.Name with 
+                | "ToDouble" -> 
+                    match a1.Type.FullName with 
+                    | "System.String" -> emitExpr expectedState <@ Double.Parse(%%a1) @>
+                    | "System.Double" -> emitExpr expectedState a1
+                    | _ -> emit (I_conv DT_R8)
+                | _ -> emitCallExpr None meth [a1]
             | Call (None,meth,[a1]) when meth.DeclaringType.FullName = "Microsoft.FSharp.Core.Operators" ->
                 let emit op = 
                     let t1 = a1.Type
