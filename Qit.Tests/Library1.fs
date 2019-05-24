@@ -119,7 +119,7 @@ module Basic =
             @>
         let v = a |> Quote.expandOperators |> Quote.evaluate
         Assert.Equal(32, v)
-
+        
     [<ReflectedDefinition>]
     let (|TryExprValue|_|) (e : Expr<'a>) : 'a option = 
         try 
@@ -160,6 +160,56 @@ module Basic =
         let v = a |> Quote.expandOperators |> Quote.evaluate
         Assert.Equal(1, v)
         
+    [<Fact>]
+    let ``splice in splice 3``() = 
+        let a = 
+            <@ 
+                splice
+                    (
+                        let f a = <@ a + a @>
+                        <@
+                            !%(f 21)
+                        @>
+                    )
+            @>
+        let v = a |> Quote.expandOperators 
+        Assert.Equal(<@ 21 + 21 @>, v)
+        Assert.Equal(42, v|> Quote.evaluate)
+        
+    [<Fact>]
+    let ``splice in splice 4``() = 
+        let a = 
+            <@ 
+                splice
+                    (
+                        let f a = <@ a + a @>
+                        let poo a = 
+                            <@
+                                !%(f a)
+                            @>
+                        poo (23 + 32)
+                    )
+            @>
+        let v = a |> Quote.expandOperators 
+        Assert.Equal(<@ (23 + 32) + (23 + 32) @>, v)
+        Assert.Equal(110, v|> Quote.evaluate)
+        
+    [<Fact(Skip="Var get's inlined and this doesn't work")>]
+    let ``replaceVar in splice 1``() = 
+        let a : Expr<int> = 
+            <@ 
+                splice
+                    (
+                        let v = Var("v",typeof<int>)
+                        <@@ !%%(Expr.Var(v)) + 1 @@>
+                        |> Quote.replaceVar v <@@23@@>
+                        |> Expr.Cast
+                    )
+            @>
+        let v = a |> Quote.expandOperators 
+        Assert.Equal(<@ 23 + 1 @>, v)
+        Assert.Equal(24, v|> Quote.evaluate)
+
     [<Fact>]
     let ``BindQuote any instance obj 1``() = 
         let a = <@ ResizeArray([2.0]).Add(2.0) @>
