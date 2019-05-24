@@ -468,6 +468,8 @@ module Quote =
                     | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = spliceUntypedMeth -> 
                         let q = loop true e
                         Some(q |> evaluateUntyped :?> _)
+                    | Patterns.Application(Patterns.Lambda(v,b), arg) when inSplice -> 
+                        Some(b.Substitute(fun i -> if i = v then Some arg else None) |> loop true)
                     | Patterns.Let(v, q, b) when inSplice && v.Type = typeof<Expr> ->
                         let expr = loop true q |> evaluateUntyped :?> Expr
                         Some(b.Substitute(fun i -> if i = v then Some (Expr.Value expr) else None) |> loop true)
@@ -1132,3 +1134,17 @@ type TypeTemplate = TypeTemplate with
                 FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation lambda :?> 'a
         | _ -> failwithf "Expecting Expr.Call got: \r\n --------- \r\n %A \r\n ---------" f
 
+type ITemp<'b> =    
+    abstract member Def<'a> : unit -> 'b
+
+[<AutoOpen>]
+module ITempExt = 
+    type ITemp<'b> with 
+        member x.Make (t:Type seq) = 
+            let t = t |> Seq.toArray
+            let t = 
+                if t.Length > 1 then 
+                    [| FSharp.Reflection.FSharpType.MakeTupleType (t) |]
+                else
+                    t
+            typeof<ITemp<'b>>.GetMethod("Def").MakeGenericMethod(t).Invoke(x,[||]) :?> 'b
