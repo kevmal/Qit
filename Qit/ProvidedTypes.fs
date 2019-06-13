@@ -1036,6 +1036,7 @@ namespace ProviderImplementation.ProvidedTypes
         let mutable staticParams = staticParams
         let mutable staticParamsApply = staticParamsApply
         let customAttributesImpl = CustomAttributesImpl(isTgt, customAttributesData)
+        let mutable returnTypeFixCache = None
 
         /// The public constructor for the design-time/source model
         new (methodName, parameters, returnType, ?invokeCode, ?isStatic) =
@@ -1101,13 +1102,19 @@ namespace ProviderImplementation.ProvidedTypes
 
         override __.ReturnType = 
             if isTgt then 
-                match returnType.Namespace, returnType.Name with 
-                | "System", "Void"->  
-                    if ImportProvidedMethodBaseAsILMethodRef_OnStack_HACK() then 
-                        typeof<Void>
-                    else 
-                        returnType
-                | _ -> returnType
+                match returnTypeFixCache with 
+                | Some returnTypeFix -> returnTypeFix
+                | None -> 
+                    let returnTypeFix = 
+                        match returnType.Namespace, returnType.Name with 
+                        | "System", "Void"->  
+                            if ImportProvidedMethodBaseAsILMethodRef_OnStack_HACK() then 
+                                typeof<Void>
+                            else 
+                                returnType
+                        | _ -> returnType
+                    returnTypeFixCache <- Some returnTypeFix
+                    returnTypeFix
             else
                 returnType
 
@@ -1246,7 +1253,6 @@ namespace ProviderImplementation.ProvidedTypes
         member __.AddXmlDoc xmlDoc = customAttributesImpl.AddXmlDoc xmlDoc
         member __.AddObsoleteAttribute (message,?isError) = customAttributesImpl.AddObsolete (message,defaultArg isError false)
         member __.AddDefinitionLocation(line,column,filePath) = customAttributesImpl.AddDefinitionLocation(line, column, filePath)
-        member __.AddCustomAttribute attribute = customAttributesImpl.AddCustomAttribute attribute
 
         member __.SetFieldAttributes attributes = attrs <- attributes
         member __.BelongsToTargetModel = isTgt
@@ -2767,7 +2773,9 @@ namespace ProviderImplementation.ProvidedTypes.AssemblyReader
             lmap
 
         member __.Entries = larr.Force()
-        member __.FindByName nm =  getmap().[nm]
+        member __.FindByName nm =  
+            let scc,ys = getmap().TryGetValue(nm)
+            if scc then ys else Array.empty
         member x.FindByNameAndArity (nm,arity) =  x.FindByName nm |> Array.filter (fun x -> x.Parameters.Length = arity)
         member x.TryFindUniqueByName name =  
             match x.FindByName(name) with
@@ -7566,6 +7574,7 @@ namespace ProviderImplementation.ProvidedTypes
         and txILMethodDef (declTy: Type) (inp: ILMethodDef) =
             let gps = if declTy.IsGenericType then declTy.GetGenericArguments() else [| |]
             let rec gps2 = inp.GenericParams |> Array.mapi (fun i gp -> txILGenericParam (fun () -> gps, gps2) (i + gps.Length) gp)
+            let mutable returnTypeFixCache = None
             { new MethodInfo() with
 
                 override __.Name = inp.Name
@@ -7576,14 +7585,21 @@ namespace ProviderImplementation.ProvidedTypes
                 override __.CallingConvention = if inp.IsStatic then CallingConventions.Standard else CallingConventions.HasThis ||| CallingConventions.Standard
 
                 override __.ReturnType = 
-                    let returnType = inp.Return.Type |> txILType (gps, gps2)
-                    match returnType.Namespace, returnType.Name with 
-                    | "System", "Void"->  
-                        if ImportProvidedMethodBaseAsILMethodRef_OnStack_HACK() then 
-                            typeof<Void>
-                        else 
-                            returnType
-                    | t -> returnType
+                    match returnTypeFixCache with 
+                    | None -> 
+                        let returnType = inp.Return.Type |> txILType (gps, gps2)
+                        let returnTypeFix =
+                            match returnType.Namespace, returnType.Name with 
+                            | "System", "Void"->  
+                                if ImportProvidedMethodBaseAsILMethodRef_OnStack_HACK() then 
+                                    typeof<Void>
+                                else 
+                                    returnType
+                            | t -> returnType
+                        returnTypeFixCache <- Some returnTypeFix
+                        returnTypeFix
+                    | Some returnTypeFix ->
+                        returnTypeFix
 
                 override __.GetCustomAttributesData() = inp.CustomAttrs |> txCustomAttributesData
                 override __.GetGenericArguments() = gps2
@@ -8066,9 +8082,12 @@ namespace ProviderImplementation.ProvidedTypes
 
 
 
-    type ProvidedAssembly(isTgt: bool, assemblyName:AssemblyName, assemblyFileName: string) =
+    type ProvidedAssembly(isTgt: bool, assemblyName:AssemblyName, assemblyFileName: string, customAttributesData) =
       
         inherit Assembly()
+        
+        let customAttributesImpl = CustomAttributesImpl(isTgt, customAttributesData)
+        
         let theTypes = ResizeArray<ProvidedTypeDefinition[] * string list option>()
         
         let addTypes (ptds:ProvidedTypeDefinition[], enclosingTypeNames: string list option) =
@@ -8079,6 +8098,8 @@ namespace ProviderImplementation.ProvidedTypes
             theTypes.Add (ptds, enclosingTypeNames)
 
         let theTypesArray = lazy (theTypes.ToArray() |> Array.collect (function (ptds, None) -> Array.map (fun ptd -> (ptd :> Type)) ptds | _ -> [| |]))
+        
+        member __.AddCustomAttribute(attribute) = customAttributesImpl.AddCustomAttribute(attribute)
 
         override __.GetReferencedAssemblies() = [| |] //notRequired x "GetReferencedAssemblies" (assemblyName.ToString())
 
@@ -8091,6 +8112,8 @@ namespace ProviderImplementation.ProvidedTypes
         override __.ReflectionOnly = true
 
         override __.GetTypes () = theTypesArray.Force()
+
+        override __.ToString () = assemblyName.ToString()
 
         override x.GetType (nm: string) = 
             if nm.Contains("+") then
@@ -8110,9 +8133,9 @@ namespace ProviderImplementation.ProvidedTypes
             File.Delete(tmpFile)
             let simpleName = Path.GetFileNameWithoutExtension(assemblyFileName)
             ProvidedAssembly(AssemblyName(simpleName), assemblyFileName)
-
+            
         new (assemblyName, assemblyFileName) = 
-            ProvidedAssembly(false, assemblyName, assemblyFileName)
+            ProvidedAssembly(false, assemblyName, assemblyFileName, fun () -> [||])
 
         member __.BelongsToTargetModel = isTgt
 
@@ -8126,6 +8149,8 @@ namespace ProviderImplementation.ProvidedTypes
             addTypes (types, enclosingGeneratedTypeNames)
 
         member __.GetTheTypes () = theTypes.ToArray()
+        
+        override __.GetCustomAttributesData() = customAttributesImpl.GetCustomAttributesData()
 
 //====================================================================================================
 // ProvidedTypesContext
@@ -8650,7 +8675,7 @@ namespace ProviderImplementation.ProvidedTypes
             referencedAssemblyPaths |> List.tryPick (fun path ->
               try
                 let simpleName = Path.GetFileNameWithoutExtension path
-                if simpleName = "mscorlib" || simpleName = "System.Runtime" || simpleName = "netstandard" then
+                if simpleName = "mscorlib" || simpleName = "System.Runtime" || simpleName = "netstandard" || simpleName = "System.Private.CoreLib" then
                     let reader = ILModuleReaderAfterReadingAllBytes (path, mkILGlobals EcmaMscorlibScopeRef)
                     let mdef = reader.ILModuleDef
                     match mdef.TypeDefs.TryFindByName(USome "System", "Object") with
@@ -8696,7 +8721,11 @@ namespace ProviderImplementation.ProvidedTypes
         let targetAssembliesQueue = ResizeArray<_>()
         do targetAssembliesQueue.Add (fun () -> 
               for ref in referencedAssemblyPaths do
+                  //printfn "%s" ref
                   let reader = mkReader ref 
+                  match reader with 
+                  | Choice1Of2 _ -> ()
+                  | Choice2Of2 ex -> printfn "Ex: %s on %s" ex.Message ref
                   let simpleName = Path.GetFileNameWithoutExtension ref 
                   targetAssembliesTable_.[simpleName] <- reader
                   match reader with 
@@ -9062,9 +9091,14 @@ namespace ProviderImplementation.ProvidedTypes
              // Allow a fail on AllowNullLiteralAttribute. Some downlevel FSharp.Core don't have this. 
              // In this case just skip the attribute which means null is allowed when targeting downlevel FSharp.Core.
              match tryConvConstructorRefToTgt x.Constructor  with 
-             | Choice1Of2 _ when x.Constructor.DeclaringType.Name = typeof<AllowNullLiteralAttribute>.Name -> None
-             | Choice1Of2 msg -> failwith msg
+             | Choice1Of2 _ when x.Constructor.DeclaringType.Name = typeof<AllowNullLiteralAttribute>.Name -> 
+                printfn "1"
+                None
+             | Choice1Of2 msg -> 
+                printfn "Fail %A" msg
+                failwith msg
              | Choice2Of2 res -> 
+                 printfn "okay...."
                  Some
                      { new CustomAttributeData () with
                         member __.Constructor =  res
@@ -9220,9 +9254,17 @@ namespace ProviderImplementation.ProvidedTypes
           match assemblyTableFwd.TryGetValue(assembly) with
           | true, newT -> newT
           | false, _ ->
-            let tgtAssembly = ProvidedAssembly(true, assembly.GetName(), assembly.Location) 
-
-            for (types, enclosingGeneratedTypeNames) in assembly.GetTheTypes() do 
+            let tgtAssembly = ProvidedAssembly(true, assembly.GetName(), assembly.Location, fun () -> convCustomAttributesDataToTgt(assembly.GetCustomAttributesData())) 
+            printfn "0000000000"
+            //convCustomAttributesDataToTgt(assembly.GetCustomAttributesData())
+            //|> 
+            //    (fun x -> printfn "POOO: %A" x; x)
+            //|> Seq.iter tgtAssembly.AddCustomAttribute
+            printfn "~~~~"
+            printfn "%A" (assembly.GetCustomAttributesData())
+            printfn "===="
+            printfn "%A" (tgtAssembly.GetCustomAttributesData())
+            for (types, enclosingGeneratedTypeNames) in assembly.GetTheTypes() do
                 let typesT = Array.map convProvidedTypeDefToTgt types
                 tgtAssembly.AddTheTypes (typesT, enclosingGeneratedTypeNames) 
 
@@ -13657,14 +13699,15 @@ namespace ProviderImplementation.ProvidedTypes
             } 
         override __.ToString() = "builder for " + moduleName
 
-    type ILAssemblyBuilder(assemblyName: AssemblyName, fileName, ilg) =
+    type ILAssemblyBuilder(assemblyName: AssemblyName, fileName, ilg, attrs : ILCustomAttribute seq) =
+        let cattrs = ResizeArray<ILCustomAttribute>(attrs)
         let manifest = 
             { Name = assemblyName.Name
               AuxModuleHashAlgorithm = 0x8004 // SHA1
               PublicKey = UNone
               Version = UNone
               Locale = UNone
-              CustomAttrs = emptyILCustomAttrs
+              CustomAttrs = { new ILCustomAttrs with member __.Entries = cattrs.ToArray() }
               //AssemblyLongevity=ILAssemblyLongevity.Unspecified
               DisableJitOptimizations = false
               JitTracking = true
@@ -13708,6 +13751,9 @@ namespace ProviderImplementation.ProvidedTypes
         let dateTimeConstructor() = (convTypeToTgt typeof<DateTime>).GetConstructor([| typeof<int64>; typeof<DateTimeKind> |])
         let dateTimeOffsetConstructor() = (convTypeToTgt typeof<DateTimeOffset>).GetConstructor([| typeof<int64>; typeof<TimeSpan> |])
         let timeSpanConstructor() = (convTypeToTgt typeof<TimeSpan>).GetConstructor([|typeof<int64>|])
+        
+        let decimalTypeTgt = convTypeToTgt typeof<decimal>
+        let stringTypeTgt = convTypeToTgt typeof<string>
 
         let (|SpecificCall|_|) templateParameter = 
             // Note: precomputation
@@ -13728,11 +13774,11 @@ namespace ProviderImplementation.ProvidedTypes
                 (fun tm ->
                    match tm with
                    | Call(obj, minfo2, args)
-#if FX_NO_REFLECTION_METADATA_TOKENS
+        #if FX_NO_REFLECTION_METADATA_TOKENS
                       when ( // if metadata tokens are not available we'll rely only on equality of method references
-#else
+        #else
                       when (minfo1.MetadataToken = minfo2.MetadataToken &&
-#endif
+        #endif
                             if isg1 then
                               minfo2.IsGenericMethod && gmd = minfo2.GetGenericMethodDefinition()
                             else
@@ -13740,7 +13786,8 @@ namespace ProviderImplementation.ProvidedTypes
                        Some(obj, (minfo2.GetGenericArguments() |> Array.toList), args)
                    | _ -> None)
             | _ ->
-                failwith ""
+                 invalidArg "templateParameter" "The parameter is not a recognized method name"
+
 
         let isEmpty s = (s = ExpectedStackState.Empty)
         let isAddress s = (s = ExpectedStackState.Address)
@@ -13805,35 +13852,56 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_conv DT_I1)
                 elif t1 = typeof<byte> then
                     ilg.Emit(I_conv DT_U1)
-            let emitCallExpr objOpt meth args = 
-                objOpt |> Option.iter (fun (e : Expr) ->
-                    let s = if e.Type.IsValueType then ExpectedStackState.Address else ExpectedStackState.Value
-                    emitExpr s e)
-
-                for pe in args do
-                    emitExpr ExpectedStackState.Value pe
-
-                // Handle the case where this is a generic method instantiated at a type being compiled
-                let mappedMeth = transMeth meth
-
-                match objOpt with
-                | Some (obj : Expr) when meth.IsAbstract || meth.IsVirtual  ->
-                    if obj.Type.IsValueType then 
-                        ilg.Emit(I_callconstraint (Normalcall, transType obj.Type, mappedMeth, None))
-                    else 
-                        ilg.Emit(I_callvirt (Normalcall, mappedMeth, None))
-                | _ ->
-                    ilg.Emit(mkNormalCall mappedMeth)
-
-                let returnTypeIsVoid = (mappedMeth.FormalReturnType = ILType.Void)
-                match returnTypeIsVoid, (isEmpty expectedState) with
-                | false, true ->
-                        // method produced something, but we don't need it
-                        pop()
-                | true, false when expr.Type = typeof<unit> ->
-                        // if we need result and method produce void and result should be unit - push null as unit value on stack
-                        ilg.Emit(I_ldnull)
-                | _ -> ()
+            let emitConv (rt : Type) opcode (t1 : Type) a1 = 
+                emitExpr ExpectedStackState.Value a1
+                match t1.GetMethod("op_Explicit",[|t1|]) with 
+                | null ->
+                    if t1 = stringTypeTgt then 
+                        let rtTgt = convTypeToTgt rt
+                        let m = rtTgt.GetMethod("Parse",[|stringTypeTgt|])
+                        ilg.Emit(I_call(Normalcall, transMeth m, None))
+                    else
+                        ilg.Emit(opcode)
+                        emitConvIfNecessary t1
+                        popIfEmptyExpected expectedState
+                | m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+            let emitOp1 name opcode (t1 : Type) a1 = 
+                emitExpr ExpectedStackState.Value a1
+                match t1.GetMethod(name,[|t1|]) with 
+                | null ->
+                    ilg.Emit(opcode)
+                    emitConvIfNecessary t1
+                    popIfEmptyExpected expectedState
+                | m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+            let emitOp2 name opcode (t1 : Type) (t2 : Type) a1 a2 = 
+                emitExpr ExpectedStackState.Value a1
+                emitExpr ExpectedStackState.Value a2
+                match t1.GetMethod(name,[|t1;t2|]) with 
+                | null ->
+                    match t2.GetMethod(name,[|t1;t2|]) with 
+                    | null ->
+                        assert(t1 = t2)
+                        ilg.Emit(opcode)
+                        emitConvIfNecessary t1
+                        popIfEmptyExpected expectedState
+                    | m -> 
+                        ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                
+            let emitBitOp name opcode (t1 : Type) a1 a2 = 
+                emitExpr ExpectedStackState.Value a1
+                emitExpr ExpectedStackState.Value a2
+                match t1.GetMethod(name,[|t1|]) with 
+                | null ->
+                    ilg.Emit(opcode)
+                    emitConvIfNecessary t1
+                    popIfEmptyExpected expectedState
+                | m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                
             /// emits given expression to corresponding IL
             match expr with
             | ForIntegerRangeLoop(loopVar, first, last, body) ->
@@ -13934,6 +14002,83 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_castclass (transType  targetTy))
 
                 popIfEmptyExpected expectedState
+                
+            | SpecificCall <@ (*) @>(None, [t1; t2; _], [a1; a2]) -> 
+                emitOp2 "op_Multiply" I_mul t1 t2 a1 a2
+           
+            | SpecificCall <@ (+) @>(None, [t1; t2; _], [a1; a2]) -> 
+                emitOp2 "op_Addition" I_add t1 t2 a1 a2
+            
+            | SpecificCall <@ (-) @>(None, [t1; t2; _], [a1; a2]) -> 
+                emitOp2 "op_Subtraction" I_sub t1 t2 a1 a2
+            
+            | SpecificCall <@ (~-) @>(None, [t1], [a1]) -> 
+                emitOp1 "op_UnaryNegation" I_neg t1 a1
+                
+            | SpecificCall <@ (/) @>(None, [t1; t2; _], [a1; a2]) -> 
+                emitOp2 "op_Division" I_div t1 t2 a1 a2
+
+            | SpecificCall <@ (~+) @>(None, [t1], [a1]) -> 
+                match t1.GetMethod("op_UnaryPlus", [|t1|]) with 
+                | null ->
+                    emitExpr expectedState a1
+                | m -> 
+                    emitExpr ExpectedStackState.Value a1
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+            
+            | SpecificCall <@ (%) @>(None, [t1; t2; _], [a1; a2]) -> 
+                emitOp2 "op_Modulus" I_rem t1 t2 a1 a2
+                
+            | SpecificCall <@ (<<<) @>(None, [t1], [a1; a2]) -> 
+                emitBitOp "op_LeftShift" I_shl t1 a1 a2
+
+            | SpecificCall <@ (>>>) @>(None, [t1], [a1; a2]) -> 
+                emitBitOp "op_RightShift" I_shr t1 a1 a2
+
+            | SpecificCall <@ (&&&) @>(None, [t1], [a1; a2]) -> 
+                emitBitOp "op_BitwiseAnd" I_and t1 a1 a2
+                        
+            | SpecificCall <@ (|||) @>(None, [t1], [a1; a2]) -> 
+                emitBitOp "op_BitwiseOr" I_or t1 a1 a2
+                        
+            | SpecificCall <@ (^^^) @>(None, [t1], [a1; a2]) -> 
+                emitBitOp "op_BitwiseXor" I_xor t1 a1 a2
+                
+            | SpecificCall <@ (~~~) @>(None, [t1], [a1]) -> 
+                emitOp1 "op_BitwiseNot" I_not t1 a1
+                
+            | SpecificCall <@ byte @>(None, [t1], [a1]) -> 
+                emitConv typeof<byte> (I_conv DT_U1) t1 a1
+
+            | SpecificCall <@ sbyte @>(None, [t1], [a1]) -> 
+                emitConv typeof<sbyte> (I_conv DT_I1) t1 a1
+
+            | SpecificCall <@ uint16 @>(None, [t1], [a1]) -> 
+                emitConv typeof<uint16> (I_conv DT_U2) t1 a1
+
+            | SpecificCall <@ int16 @>(None, [t1], [a1]) -> 
+                emitConv typeof<int16> (I_conv DT_I2) t1 a1
+
+            | SpecificCall <@ uint32 @>(None, [t1], [a1]) -> 
+                emitConv typeof<uint32> (I_conv DT_U4) t1 a1
+
+            | SpecificCall <@ int @>(None, [t1], [a1])
+            | SpecificCall <@ int32 @>(None, [t1], [a1]) -> 
+                emitConv typeof<int> (I_conv DT_I4) t1 a1
+
+            | SpecificCall <@ uint64 @>(None, [t1], [a1]) -> 
+                emitConv typeof<uint64> (I_conv DT_U8) t1 a1
+
+            | SpecificCall <@ int64 @>(None, [t1], [a1]) -> 
+                emitConv typeof<int64> (I_conv DT_I8) t1 a1
+
+            | SpecificCall <@ single @>(None, [t1], [a1])
+            | SpecificCall <@ float32 @>(None, [t1], [a1]) -> 
+                emitConv typeof<single> (I_conv DT_R4) t1 a1
+
+            | SpecificCall <@ double @>(None, [t1], [a1])
+            | SpecificCall <@ float @>(None, [t1], [a1]) -> 
+                emitConv typeof<double> (I_conv DT_R8) t1 a1
 
             | SpecificCall <@ LanguagePrimitives.IntrinsicFunctions.GetArray @> (None, [ty], [arr; index]) ->
                 // observable side-effect - IndexOutOfRangeException
@@ -13989,6 +14134,36 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_stsfld (ILVolatility.Nonvolatile, transFieldSpec field))
                 else
                     ilg.Emit(I_stfld (ILAlignment.Aligned, ILVolatility.Nonvolatile, transFieldSpec field))
+
+            | Call (objOpt,meth,args) ->
+                objOpt |> Option.iter (fun e ->
+                    let s = if e.Type.IsValueType then ExpectedStackState.Address else ExpectedStackState.Value
+                    emitExpr s e)
+
+                for pe in args do
+                    emitExpr ExpectedStackState.Value pe
+
+                // Handle the case where this is a generic method instantiated at a type being compiled
+                let mappedMeth = transMeth meth
+
+                match objOpt with
+                | Some obj when meth.IsAbstract || meth.IsVirtual  ->
+                    if obj.Type.IsValueType then 
+                        ilg.Emit(I_callconstraint (Normalcall, transType obj.Type, mappedMeth, None))
+                    else 
+                        ilg.Emit(I_callvirt (Normalcall, mappedMeth, None))
+                | _ ->
+                    ilg.Emit(mkNormalCall mappedMeth)
+
+                let returnTypeIsVoid = (mappedMeth.FormalReturnType = ILType.Void)
+                match returnTypeIsVoid, (isEmpty expectedState) with
+                | false, true ->
+                        // method produced something, but we don't need it
+                        pop()
+                | true, false when expr.Type = typeof<unit> ->
+                        // if we need result and method produce void and result should be unit - push null as unit value on stack
+                        ilg.Emit(I_ldnull)
+                | _ -> ()
 
             | NewObject (ctor,args) ->
                 for pe in args do
@@ -14142,57 +14317,9 @@ namespace ProviderImplementation.ProvidedTypes
                 let lambdaLocals = Dictionary()
                 emitLambda(ilg, v, body, expr.GetFreeVars(), lambdaLocals, parameterVars)
                 popIfEmptyExpected expectedState
-
-            | Call (None,meth,[a1;a2]) when meth.DeclaringType.FullName = "Microsoft.FSharp.Core.Operators" ->
-                let emit op = 
-                    let t1 = a1.Type
-                    emitExpr ExpectedStackState.Value a1
-                    emitExpr ExpectedStackState.Value a2
-                    let dec = (convTypeToTgt typeof<decimal>)
-                    if t1 = dec then
-                        let meth = dec.GetMethod meth.Name
-                        ilg.Emit(I_call(Normalcall, transMeth meth, None))
-                    else
-                        ilg.Emit(op)
-                        emitConvIfNecessary t1
-                    popIfEmptyExpected expectedState
-                match meth.Name with 
-                | "op_Subtraction" -> emit (I_sub)
-                | "op_Division" -> emit (I_div)
-                | "op_Modulus" -> emit (I_rem)
-                | _ -> emitCallExpr None meth [a1;a2]
-            | Call (None,meth,[a1]) when meth.DeclaringType.FullName = "Microsoft.FSharp.Core.ExtraTopLevelOperators" ->
-                let emit op = 
-                    let t1 = a1.Type
-                    emitExpr ExpectedStackState.Value a1
-                    ilg.Emit(op)
-                    popIfEmptyExpected expectedState
-                match meth.Name with 
-                | "ToDouble" -> 
-                    match a1.Type.FullName with 
-                    | "System.String" -> emitExpr expectedState <@ Double.Parse(%%a1) @>
-                    | "System.Double" -> emitExpr expectedState a1
-                    | _ -> emit (I_conv DT_R8)
-                | _ -> emitCallExpr None meth [a1]
-            | Call (None,meth,[a1]) when meth.DeclaringType.FullName = "Microsoft.FSharp.Core.Operators" ->
-                let emit op = 
-                    let t1 = a1.Type
-                    emitExpr ExpectedStackState.Value a1
-                    ilg.Emit(op)
-                    popIfEmptyExpected expectedState
-                match meth.Name with 
-                | "ToInt32" | "ToInt" -> 
-                    match a1.Type.FullName with 
-                    | "System.String" -> emitExpr expectedState <@ Int32.Parse(%%a1) @>
-                    | "System.Int32" -> emitExpr expectedState a1
-                    | _ -> emit (I_conv DT_I4)
-                | "op_Division" -> emit (I_div)
-                | "op_Modulus" -> emit (I_rem)
-                | _ -> emitCallExpr None meth [a1]
-            | Call (objOpt,meth,args) -> emitCallExpr objOpt meth args
             | n ->
                 failwithf "unknown expression '%A' in generated method" n
-
+        
         member __.EmitExpr (expectedState, expr) = emitExpr expectedState expr
 
     //-------------------------------------------------------------------------------------------------
@@ -14349,7 +14476,13 @@ namespace ProviderImplementation.ProvidedTypes
             let ilg = context.ILGlobals
             let assemblyName = targetAssembly.GetName()
             let assemblyFileName = targetAssembly.Location
-            let assemblyBuilder = ILAssemblyBuilder(assemblyName, assemblyFileName, ilg)
+            let assemblyBuilder = 
+                let attrs = targetAssembly.GetCustomAttributesData()
+                printfn "!!!!!"
+                printfn "%A" (attrs)
+                let cattrs = ResizeArray()
+                defineCustomAttrs cattrs.Add attrs
+                ILAssemblyBuilder(assemblyName, assemblyFileName, ilg, cattrs)
             let assemblyMainModule = assemblyBuilder.MainModule
 
             // Set the Assembly on the type definitions
@@ -14912,3 +15045,4 @@ namespace ProviderImplementation.ProvidedTypes
 
 #endif 
 #endif
+
