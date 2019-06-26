@@ -1555,7 +1555,10 @@ namespace ProviderImplementation.ProvidedTypes
                 |> (if hasFlag bindingFlags BindingFlags.DeclaredOnly || this.BaseType = null then id else (fun mems -> Array.append mems (this.ErasedBaseType.GetNestedTypes(bindingFlags)))))
 
         override this.GetConstructorImpl(bindingFlags, _binder, _callConventions, _types, _modifiers) = 
-            let xs = this.GetConstructors bindingFlags |> Array.filter (fun m -> m.Name = ".ctor")
+            let xs = 
+                this.GetConstructors bindingFlags 
+                |> Array.filter (fun m -> m.Name = ".ctor")
+                |> Array.filter (fun m -> m.GetParameters() |> Seq.zip _types |> Seq.exists (fun (t,p) -> p.ParameterType <> t) |> not )
             if xs.Length > 1 then failwith "GetConstructorImpl. not support overloads"
             if xs.Length > 0 then xs.[0] else null
 
@@ -8985,6 +8988,8 @@ namespace ProviderImplementation.ProvidedTypes
             | NewObject (c, exprs) ->
                 let exprsR = List.map convExprToTgt exprs
                 Expr.NewObjectUnchecked (convConstructorRefToTgt c, exprsR)
+            | DefaultValue (t) -> 
+                Expr.DefaultValue (convTypeToTgt t)
             | Coerce (expr, t) ->
                 Expr.Coerce (convExprToTgt expr, convTypeToTgt t)
             | TypeTest (expr, t) ->
@@ -9092,13 +9097,13 @@ namespace ProviderImplementation.ProvidedTypes
              // In this case just skip the attribute which means null is allowed when targeting downlevel FSharp.Core.
              match tryConvConstructorRefToTgt x.Constructor  with 
              | Choice1Of2 _ when x.Constructor.DeclaringType.Name = typeof<AllowNullLiteralAttribute>.Name -> 
-                printfn "1"
+                //printfn "1"
                 None
              | Choice1Of2 msg -> 
-                printfn "Fail %A" msg
+                //printfn "Fail %A" msg
                 failwith msg
              | Choice2Of2 res -> 
-                 printfn "okay...."
+                 //printfn "okay...."
                  Some
                      { new CustomAttributeData () with
                         member __.Constructor =  res
@@ -9255,15 +9260,15 @@ namespace ProviderImplementation.ProvidedTypes
           | true, newT -> newT
           | false, _ ->
             let tgtAssembly = ProvidedAssembly(true, assembly.GetName(), assembly.Location, fun () -> convCustomAttributesDataToTgt(assembly.GetCustomAttributesData())) 
-            printfn "0000000000"
+            //printfn "0000000000"
             //convCustomAttributesDataToTgt(assembly.GetCustomAttributesData())
             //|> 
             //    (fun x -> printfn "POOO: %A" x; x)
             //|> Seq.iter tgtAssembly.AddCustomAttribute
-            printfn "~~~~"
-            printfn "%A" (assembly.GetCustomAttributesData())
-            printfn "===="
-            printfn "%A" (tgtAssembly.GetCustomAttributesData())
+            //printfn "~~~~"
+            //printfn "%A" (assembly.GetCustomAttributesData())
+            //printfn "===="
+            //printfn "%A" (tgtAssembly.GetCustomAttributesData())
             for (types, enclosingGeneratedTypeNames) in assembly.GetTheTypes() do
                 let typesT = Array.map convProvidedTypeDefToTgt types
                 tgtAssembly.AddTheTypes (typesT, enclosingGeneratedTypeNames) 
@@ -14085,7 +14090,7 @@ namespace ProviderImplementation.ProvidedTypes
                 emitExpr ExpectedStackState.Value arr
                 emitExpr ExpectedStackState.Value index
                 if isAddress expectedState then
-                    ilg.Emit(I_ldelema (ILReadonly.ReadonlyAddress, ILArrayShape.SingleDimensional, transType ty))
+                    ilg.Emit(I_ldelema (ILReadonly.NormalAddress, ILArrayShape.SingleDimensional, transType ty))
                 else
                     ilg.Emit(I_ldelem_any (ILArrayShape.SingleDimensional, transType ty))
 
@@ -14118,13 +14123,23 @@ namespace ProviderImplementation.ProvidedTypes
 
             | FieldGet (objOpt,field) ->
                 objOpt |> Option.iter (fun e ->
-                    let s = if e.Type.IsValueType then ExpectedStackState.Address else ExpectedStackState.Value
-                    emitExpr s e)
-                if field.IsStatic then
-                    ilg.Emit(I_ldsfld (ILVolatility.Nonvolatile, transFieldSpec field))
-                else
-                    ilg.Emit(I_ldfld (ILAlignment.Aligned, ILVolatility.Nonvolatile, transFieldSpec field))
-
+                    let a = e.Type.IsValueType 
+                    //printfn "%s %A" (e.Type.Name) a
+                    let s = if e.Type.IsValueType then ExpectedStackState.Value else ExpectedStackState.Address 
+                    emitExpr ExpectedStackState.Value e)
+                match expectedState with 
+                | ExpectedStackState.Value -> 
+                    if field.IsStatic then
+                        ilg.Emit(I_ldsfld (ILVolatility.Nonvolatile, transFieldSpec field))
+                    else
+                        ilg.Emit(I_ldfld (ILAlignment.Aligned, ILVolatility.Nonvolatile, transFieldSpec field))
+                | ExpectedStackState.Address -> 
+                    if field.IsStatic then
+                        ilg.Emit(I_ldsflda (transFieldSpec field))
+                    else
+                        ilg.Emit(I_ldflda (transFieldSpec field))
+                | ExpectedStackState.Empty 
+                | _ -> failwith "Unreachable"
             | FieldSet (objOpt,field,v) ->
                 objOpt |> Option.iter (fun e ->
                     let s = if e.Type.IsValueType then ExpectedStackState.Address else ExpectedStackState.Value
@@ -14317,6 +14332,14 @@ namespace ProviderImplementation.ProvidedTypes
                 let lambdaLocals = Dictionary()
                 emitLambda(ilg, v, body, expr.GetFreeVars(), lambdaLocals, parameterVars)
                 popIfEmptyExpected expectedState
+
+            | DefaultValue (t) ->
+                let ilt = transType t
+                let lb = ilg.DeclareLocal ilt
+                ilg.Emit(I_ldloca lb.LocalIndex)
+                ilg.Emit(I_initobj ilt)
+                ilg.Emit(I_ldloc lb.LocalIndex)
+
             | n ->
                 failwithf "unknown expression '%A' in generated method" n
         
@@ -14478,8 +14501,8 @@ namespace ProviderImplementation.ProvidedTypes
             let assemblyFileName = targetAssembly.Location
             let assemblyBuilder = 
                 let attrs = targetAssembly.GetCustomAttributesData()
-                printfn "!!!!!"
-                printfn "%A" (attrs)
+                //printfn "!!!!!"
+                //printfn "%A" (attrs)
                 let cattrs = ResizeArray()
                 defineCustomAttrs cattrs.Add attrs
                 ILAssemblyBuilder(assemblyName, assemblyFileName, ilg, cattrs)
