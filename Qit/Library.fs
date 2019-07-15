@@ -220,7 +220,7 @@ module UncheckedQuotations =
         | ExprShape.ShapeLambda (v, e) -> ShapeLambdaUnchecked (v,e)
 
     let RebuildShapeCombinationUnchecked (Shape comb,args) = 
-        printfn "UNCHECKED %A" args
+        //printfn "UNCHECKED %A" args
         comb args
 
     let rec traverseQuotation f q = 
@@ -369,7 +369,14 @@ module internal Core =
 open Core
     
 
+[<AllowNullLiteral>]
 type QitOpAttribute() = inherit Attribute()
+
+type QitBindingObj() = 
+    abstract member Final : Expr -> Expr
+    default x.Final(e) = e
+    member val Var : Var option = None with get,set
+
 
 open ReflectionPatterns
 module Operators = 
@@ -441,25 +448,385 @@ module Quote =
                 | _ -> None
             )
 
+    type Bleh = 
+        | SpliceOkay of Expr
+
+            
+    let rec genMatch (t1 : Type) (t2 : Type) = 
+        if t1.IsGenericType then 
+            if t2.IsGenericType then 
+                if t1.GetGenericTypeDefinition() <> t2.GetGenericTypeDefinition() then 
+                    None
+                else
+                    genMatchAll (t1.GetGenericArguments()) (t2.GetGenericArguments())
+            else
+                None
+        else
+            Some [t1, [t2]]
+            
+
+
+    and genMatchAll (tps : Type seq) (args : Type seq) = 
+        let results = 
+            (tps,args) 
+            ||> Seq.map2 genMatch
+            |> Seq.fold 
+                (fun all r ->
+                    match all,r with 
+                    | None,_ -> None 
+                    | _,None -> None 
+                    | Some all, Some l -> 
+                        Some (l @ all)
+                ) (Some [])
+        match results with 
+        | Some rs ->
+            rs 
+            |> Seq.groupBy
+                (fun (t1,t2) -> t1)
+            |> Seq.map 
+                (fun (t1, ts) -> t1, ts |> Seq.toList |> List.collect snd |> List.distinct)
+            |> Seq.toList
+            |> Some
+
+        | None -> None
+    let reduceMatch (l : (Type*Type list) list) = 
+        l
+        |> List.map 
+            (fun (t,l) ->
+                match l with 
+                | [t2] -> t,t2
+                | [] -> failwithf "Unreachable"
+                | l -> t, l |> List.filter (fun x -> x <> typeof<obj>) |> List.head
+                | l -> failwithf "Multiple matches (%A) for %A" l t
+            )
+    let rec genericParameter (t : Type) = 
+        if t.IsGenericType then 
+            t.GetGenericArguments() |> Seq.exists genericParameter
+        else
+            t.IsGenericParameter
+
+    let solveGenType (gt : Type) (l : (Type * Type) list) =
+        assert (gt.IsGenericTypeDefinition)
+        try
+            let ts =  
+                gt.GetGenericArguments()
+                |> Array.map 
+                    (fun x ->
+                        l |> List.find(fun (t,_) -> t = x) |> snd
+                    )
+            gt.MakeGenericType(ts)
+        with 
+        | _ -> failwithf "Could not solve gen type %A with %A" gt l
+
+    let solveGenMeth (gt : MethodInfo) (l : (Type * Type) list) =
+        assert (gt.IsGenericMethodDefinition)
+        try
+            let ts =  
+                gt.GetGenericArguments()
+                |> Array.map 
+                    (fun x ->
+                        l |> List.find(fun (t,_) -> t = x) |> snd
+                    )
+            gt.MakeGenericMethod(ts)
+        with 
+        | _ -> failwithf "Could not solve gen type %A with %A" gt l
+    let expandOperatorsUntypedTest (expr : Expr) = 
+        let gmat q t1 t2 = 
+            match genMatchAll t1 t2 with 
+            | Some l -> reduceMatch l
+            | None -> failwithf "Could not match %A to %A in %A" t1 t2 q
+        let bindAll = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance
+        let rec loop replace expr = //strong expectedType expr = 
+            expr
+            |> UncheckedQuotations.traverseQuotation
+                (fun q -> 
+                    match q with
+                    | Patterns.Call(None, m, args) when m.IsGenericMethod ->
+                        let args = args |> List.map (loop replace)
+                        let gm = m.GetGenericMethodDefinition()
+                        let t1 = gm.GetParameters() |> Seq.map (fun x -> x.ParameterType) |> Seq.toArray
+                        let t2 = args |> Seq.map (fun x -> x.Type) |> Seq.toArray
+                        let c1 = gmat q t1 t2
+                        let c2 = gmat q [gm.ReturnType] [m.ReturnType]
+                        let c = c1 @ c2
+                        let m = solveGenMeth gm c
+                        Some(Expr.CallUnchecked(m, args))
+                    | Patterns.Call(Some(Patterns.Var vv), m, args) when Map.containsKey vv replace ->
+                        let v : Var = replace.[vv]
+                        let m = v.Type.GetMethods() |> Seq.find (fun x -> m.MetadataToken = x.MetadataToken)
+                        Some(Expr.CallUnchecked(Expr.Var v, m, args) |> loop replace)
+                    | Patterns.PropertyGet(Some(Patterns.Var vv), m, args) when Map.containsKey vv replace ->
+                        let v : Var = replace.[vv]
+                        let m = v.Type.GetProperties() |> Seq.find (fun x -> m.MetadataToken = x.MetadataToken)
+                        Some(Expr.PropertyGet(Expr.Var v, m, args) |> loop replace)
+                    | Patterns.PropertySet(Some(Patterns.Var vv), m, args, vl) when Map.containsKey vv replace ->
+                        let v : Var = replace.[vv]
+                        let m = v.Type.GetProperties() |> Seq.find (fun x -> m.MetadataToken = x.MetadataToken)
+                        Some(Expr.PropertySet(Expr.Var v, m, vl, args) |> loop replace)
+                    | Patterns.Let(var, binding, body) when var.Type.IsGenericType -> 
+                        let t = var.Type 
+                        let gt = var.Type.GetGenericTypeDefinition()
+                        let c1 = ctorContraints replace binding
+                        let c2 = useConstraints replace var body
+                        let tt = solveGenType gt (c1 @ c2)
+                        if tt = t then 
+                            Expr.Let(var, loop replace binding, loop replace body) |> Some
+                        else
+                            let v = Var(var.Name, tt, var.IsMutable)
+                            let replace = Map.add var v replace
+                            Expr.Let(v, applyCtor replace tt binding, loop replace body) |> Some
+                    | _ -> None
+                )
+        and applyCtor replace tt e = 
+            match e with 
+            | Patterns.Let(var,binding,body) -> 
+                let b2 = loop replace binding
+                if b2.Type <> binding.Type then 
+                    let v2 = Var(var.Name,b2.Type,var.IsMutable)
+                    let replace = Map.add var v2 replace
+                    Expr.Let(v2, loop replace binding, applyCtor replace tt body)
+                else
+                    Expr.Let(var, loop replace binding, applyCtor replace tt body)
+            | Patterns.NewObject(ctor, args) -> 
+                let gctor = 
+                    let i = ctor.DeclaringType.GetConstructors() |> Seq.findIndex (fun x -> x = ctor)
+                    tt.GetConstructors().[i]
+                Expr.NewObject(gctor, args |> List.map (loop replace))
+            | _ -> failwithf "39fm Unhandled %A" e
+        and useConstraints replace v e = 
+            let ra = ResizeArray()
+            let rec inner expected q = 
+                match q with
+                | Patterns.Call(Some(Patterns.Var vv), m, args) when vv = v ->
+                    let args = args |> List.map (loop replace)
+                    let gdef = v.Type.GetGenericTypeDefinition()
+                    //let i = v.Type.GetMethods(bindAll) |> Seq.findIndex (fun x -> x = m)
+                    let gm = gdef.GetMethods(bindAll) |> Seq.find (fun x -> m.Name = x.Name && x.MetadataToken = m.MetadataToken)
+                    match genMatchAll (gm.GetParameters() |> Seq.map (fun x -> x.ParameterType)) (args |> List.map (fun x -> x.Type)) with 
+                    | Some c -> 
+                        ra.Add(reduceMatch c)
+                    | None -> failwithf "Could not reconcile %A" q 
+                | Patterns.PropertyGet(Some(Patterns.Var vv), m, args) when vv = v ->
+                    let args = args |> List.map (loop replace)
+                    let gdef = v.Type.GetGenericTypeDefinition()
+                    let gm = 
+                        let i = v.Type.GetProperties(bindAll) |> Seq.findIndex (fun x -> x = m)
+                        gdef.GetProperties(bindAll).[i]
+                    match genMatch gm.PropertyType m.PropertyType with 
+                    | Some c -> 
+                        ra.Add(reduceMatch c)
+                    | None -> failwithf "Could not reconcile %A" q 
+                    match genMatchAll (gm.GetIndexParameters() |> Seq.map (fun x -> x.ParameterType)) (args |> List.map (fun x -> x.Type)) with 
+                    | Some c -> 
+                        ra.Add(reduceMatch c)
+                    | None -> failwithf "Could not reconcile args in %A" q 
+                | ShapeCombinationUnchecked(a, args) -> args |> List.iter (inner None)
+                | ShapeLambdaUnchecked(v, body) -> inner None body
+                | ShapeVarUnchecked(v) -> ()
+            inner None expr
+            ra |> Seq.concat |> Seq.toList
+           
+        and ctorContraints replace e = 
+            match e with 
+            | Patterns.Let(var,binding,body) -> 
+                let b2 = loop replace binding
+                if b2.Type <> binding.Type then 
+                    let v2 = Var(var.Name,b2.Type,var.IsMutable)
+                    let replace = Map.add var v2 replace
+                    ctorContraints replace body
+                else
+                    ctorContraints replace body
+            | Patterns.NewObject(ctor, args) -> 
+                let gdef = ctor.DeclaringType.GetGenericTypeDefinition()
+                //let gargs = gdef.GetGenericArguments()
+                //let targs = ctor.DeclaringType.GetGenericArguments()
+                let gctor = 
+                    let i = ctor.DeclaringType.GetConstructors() |> Seq.findIndex (fun x -> x = ctor)
+                    gdef.GetConstructors().[i]
+                let ps = ctor.GetParameters()
+                let gps = gctor.GetParameters()
+                let rec loop2 i flag cs nargs = 
+                    if i < args.Length then 
+                        let a = loop replace args.[i]
+                        let at = a.Type
+                        let flag = flag || (at <> ps.[i].ParameterType)
+                        if genericParameter gps.[i].ParameterType then 
+                            match genMatch gps.[i].ParameterType at with
+                            | None -> failwithf "Could not match types %A and %A in %A" gps.[i] at e
+                            | Some(l) -> 
+                                loop2 (i + 1) flag ((reduceMatch l) :: cs) (a :: nargs)
+                        else
+                            loop2 (i + 1) flag (cs) (a :: nargs)
+                    else
+                        flag,cs, nargs |> List.rev
+                match loop2 0 false [] [] with 
+                | _,cs,_ -> cs |> List.concat
+            | _ -> failwithf "39fm Unhandled %A" e
+        loop Map.empty expr
+            
+    (*   
+    let expandOperatorsUntypedTest (expr : Expr) = 
+        let bindAll = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance
+        let d = Dictionary<_,_>()
+        let replace = Dictionary<_,_>()
+        let rec loop expr = //strong expectedType expr = 
+            expr
+            |> traverseQuotation
+                (fun q -> 
+                    match q with
+                    | Patterns.Call(Some o, method, args) ->
+                        let eo = loop o
+                        if eo.Type.IsGenericType then 
+                            let gdef = eo.Type.GetGenericTypeDefinition()
+                            let i = o.Type.GetMethods(bindAll) |> Seq.findIndex (fun m -> m = method)
+                            let m = gdef.GetMethods(bindAll).[i]
+                            let eargs = args |> List.map loop
+                            let ts = eargs |> List.map (fun x -> x.Type)
+                            let matchParameters = 
+                                match genMatchAll (m.GetParameters() |> Array.map (fun x -> x.Type)) ts with 
+                                | None -> failwithf "Could not infer splice type %A in %A" q expr
+                                | Some l ->
+                                    l
+                                    |> List.choose
+                                        (fun (x,l) ->
+                                            if x.IsGenericParameter then 
+                                                if List.Length l <> 1 then 
+                                                    failwithf "Could not infer splice type %A in %A. %A could be %A" q expr x l
+                                                else
+                                                    l |> List.head |> Some
+                                            else
+                                                None
+                                        )
+                                    |> dict
+                            
+
+                        else
+                            if method.IsGenericMethod then 
+                                method.GetGenericMethodDefinition() |> Some
+                            else
+                                None
+                        
+
+
+                    | Patterns.Let(var, binding, body) when var.Type.IsGenericType ->
+                        let gdef = var.Type.GetGenericTypeDefinition()
+                        let v2 = Var(var.Name, gdef)
+                        replace.Add(var,v2)
+                        Expr.Let(v2,loop binding,loop body) |> Some
+                    | Patterns.Call(Some(Patterns.Var v), method, args) when replace.ContainsKey v -> 
+                        
+                    | _ -> None
+                )
+        loop expr
+    *)
+    
+    let expandOperatorsUnchecked (expr : Expr) = 
+        let rec loop inSplice expr = 
+            expr
+            |> UncheckedQuotations.traverseQuotation
+                (fun q -> 
+                    match q with 
+                    | Patterns.Let(var, binding, body) when typeof<QitBindingObj>.IsAssignableFrom(binding.Type) ->
+                        let b = binding |> loop true |> evaluateUntyped  :?> QitBindingObj
+                        b.Var <- Some var
+                        let body = 
+                            body.Substitute(fun x -> if x = var then Some (Expr.Value(b, binding.Type)) else None)
+                            |> loop inSplice
+                        b.Final(body) |> Some
+                    | Patterns.Let(v,e,b) when inSplice -> 
+                        b.Substitute(fun i -> if i = v then Some(e) else None)
+                        |> loop inSplice 
+                        |> Some
+                    | Patterns.Call(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.MethodWithReflectedDefinition(meth), args) -> 
+                        let meth = meth 
+                        let args = 
+                            match o with 
+                            | Some b -> [b] @ args
+                            | None -> args
+                        let res = 
+                            match meth with 
+                            | DerivedPatterns.Lambdas(v, body) -> 
+                                let assign = args 
+                                let assign = 
+                                    if List.length assign < List.length v then 
+                                        assign @ [ <@@ () @@> ]
+                                    else
+                                        assign
+                                (v |> List.concat, assign)
+                                ||> List.zip
+                                |> Seq.fold 
+                                    (fun (e : Expr) (v,a) -> 
+                                        e.Substitute(fun x -> if x = v then Some a else None)
+                                    ) body
+                            | _ -> failwith "Unreachable"
+                        res
+                        |> loop inSplice 
+                        |> Some
+                    | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = splice2Meth -> 
+                        let q = loop true e
+                        Some(q |> evaluateUntyped :?> Expr)
+                    | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = spliceUntypedMeth -> 
+                        let q = loop true e
+                        Some(q |> evaluateUntyped :?> _)
+                    | Patterns.Application(Patterns.Lambda(v,b), arg) when inSplice -> 
+                        Some(b.Substitute(fun i -> if i = v then Some arg else None) |> loop true)
+                    | Patterns.Let(v, q, b) when inSplice && v.Type = typeof<Expr> ->
+                        let expr = loop true q |> evaluateUntyped :?> Expr
+                        Some(b.Substitute(fun i -> if i = v then Some (Expr.Value expr) else None) |> loop true)
+                    | Patterns.Let(v, q, b) when inSplice && v.Type.IsGenericType && v.Type.GetGenericTypeDefinition() = typedefof<Expr<_>> ->
+                        let expr = loop true q |> evaluateUntyped :?> Expr
+                        let expr = typeof<Expr>.GetMethod("Cast").MakeGenericMethod(v.Type.GetGenericArguments().[0]).Invoke(null, [|expr|])
+                        Some(b.Substitute(fun i -> if i = v then Some (Expr.Value(expr, v.Type)) else None) |> loop true)
+                    | Patterns.QuoteRaw q when inSplice -> 
+                        Some(Expr.Value(loop false q))
+                    | Patterns.QuoteTyped q2 when inSplice -> 
+                        let expr = loop false q2
+                        let expr = typeof<Expr>.GetMethod("Cast").MakeGenericMethod(q2.Type).Invoke(null, [|expr|])
+                        Some(Expr.Value(expr, q.Type))
+                    | _ -> None
+                )
+        loop false expr
+    
     let expandOperatorsUntyped (expr : Expr) = 
         let rec loop inSplice expr = 
             expr
             |> traverseQuotation
                 (fun q -> 
                     match q with 
+                    | Patterns.Let(var, binding, body) when typeof<QitBindingObj>.IsAssignableFrom(binding.Type) ->
+                        let b = binding |> loop true |> evaluateUntyped  :?> QitBindingObj
+                        b.Var <- Some var
+                        let body = 
+                            body.Substitute(fun x -> if x = var then Some (Expr.Value(b, binding.Type)) else None)
+                            |> loop inSplice
+                        b.Final(body) |> Some
                     | Patterns.Let(v,e,b) when inSplice -> 
                         b.Substitute(fun i -> if i = v then Some(e) else None)
                         |> loop inSplice 
                         |> Some
                     | Patterns.Call(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.MethodWithReflectedDefinition(meth), args) -> 
-                        let this = match o with Some b -> Expr.Application(meth, b) | _ -> meth
-                        let res = Expr.Applications(this, [ for a in args -> [a]])
-                        let rec expandLambda e : Expr = 
-                            match e with 
-                            | Patterns.Application(ExprShape.ShapeLambda(v, body), assign) -> 
-                                (expandLambda body).Substitute(fun i -> if i = v then Some assign else None)
-                            | _ -> e
-                        expandLambda res 
+                        let meth = meth 
+                        let args = 
+                            match o with 
+                            | Some b -> [b] @ args
+                            | None -> args
+                        let res = 
+                            match meth with 
+                            | DerivedPatterns.Lambdas(v, body) -> 
+                                let assign = args 
+                                let assign = 
+                                    if List.length assign < List.length v then 
+                                        assign @ [ <@@ () @@> ]
+                                    else
+                                        assign
+                                (v |> List.concat, assign)
+                                ||> List.zip
+                                |> Seq.fold 
+                                    (fun (e : Expr) (v,a) -> 
+                                        e.Substitute(fun x -> if x = v then Some a else None)
+                                    ) body
+                            | _ -> failwith "Unreachable"
+                        res
                         |> loop inSplice 
                         |> Some
                     | Patterns.Call(None, minfo, [e]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = splice2Meth -> 
@@ -1054,7 +1421,7 @@ module Quote =
                 ProvidedMethod("meth", [], typeof<'a>, invokeCode = f q, isStatic = true), (fun mt -> Expr.Lambda(Var("", typeof<unit>), Expr.Call(mt, [])))
         t.AddMember m
         asm.AddTypes [t]
-        let ctx = ProvidedTypesContext(refs |> Seq.map (fun x -> x.Location) |> Seq.toList, [], refs |> Seq.toList)//[System.Reflection.Assembly.GetExecutingAssembly()])
+        let ctx = ProvidedTypesContext(refs |> Seq.filter (fun x -> not x.IsDynamic) |> Seq.map (fun x -> x.Location) |> Seq.toList, [], refs |> Seq.toList)//[System.Reflection.Assembly.GetExecutingAssembly()])
         let t2 = ctx.ConvertSourceProvidedTypeDefinitionToTarget(t)
         let compiler = AssemblyCompiler(t2.Assembly :?> _, ctx)
         let bytes = compiler.Compile(false)
@@ -1063,7 +1430,7 @@ module Quote =
         let mt = r.GetMethod("meth")
         FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation(build mt) :?> 'a
     let compileLambda q = compileLambdaWithRefs [] q
-        
+ 
         
 
 [<AutoOpen>]
@@ -1082,56 +1449,66 @@ module Extensions =
 
 
 open Quote
-type TypeTemplate = TypeTemplate with 
-    static member inline create ([<ReflectedDefinition(false)>] f : Expr<'a>) : Type seq -> 'a  = 
-        let rec extractCall e = 
-            match e with
-            | Patterns.Lambda(_,body) -> extractCall body
-            | Patterns.Call(o,minfo,args) -> minfo
-            | _ -> failwithf "Expression not of expected form %A" e
-        match f with
-        | Patterns.Lambda (_,e) -> 
-            let minfo = extractCall e
-            let makeMethod =
-                if minfo.IsGenericMethod then
-                    let typeArgs = minfo.GetGenericArguments()
-                    let minfodef = minfo.GetGenericMethodDefinition()
-                    fun types -> 
-                        minfodef.MakeGenericMethod(types |> Seq.toArray)
-                else
-                    fun _ -> minfo
-            fun types -> 
-                let method = makeMethod types
-                let lambda = 
-                    f
-                    |> traverseQuotation
-                        (fun e -> 
-                            match e with
-                            | Patterns.Call(Some o,_,args) -> Some(Expr.Call(o,method,args))
-                            | Patterns.Call(None,_,args) -> Some(Expr.Call(method,args))
-                            | _ -> None
-                        )
-                FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation lambda :?> 'a
 
-        | Patterns.Call(o,minfo,args) -> 
-            let makeMethod =
-                if minfo.IsGenericMethod then
-                    let typeArgs = minfo.GetGenericArguments()
-                    let minfodef = minfo.GetGenericMethodDefinition()
-                    fun types -> 
-                        minfodef.MakeGenericMethod(types |> Seq.toArray)
-                else
-                    fun _ -> minfo
+type TypeTemplate<'a>() =  
+    static let cache = Dictionary<MethodInfo, Dictionary<Type list, 'a>>()
+    static let tryCache minfo (types : Type list) builder = 
+        let scc,lu2 = cache.TryGetValue(minfo)
+        if scc then 
+            let scc,v = lu2.TryGetValue(types)
+            if scc then 
+                v
+            else
+                let v = builder()
+                lu2.[types] <- v
+                v
+        else
+            let lu2 = Dictionary()
+            let v = builder()
+            lu2.[types] <- v
+            cache.[minfo] <- lu2
+            v
+    static member create ([<ReflectedDefinition(false)>] f : Expr<'a>) : Type list -> 'a  = 
+        let makeMethod (minfo : MethodInfo) =
+            if minfo.IsGenericMethod then
+                let minfodef = minfo.GetGenericMethodDefinition()
+                fun types -> minfodef.MakeGenericMethod(types |> Seq.toArray)
+            else
+                fun _ -> minfo
+        match f with
+        | DerivedPatterns.Lambdas(vs, Patterns.Call(o,minfo,args)) -> 
+            let makeMethod = makeMethod minfo
             fun types -> 
-                let method = makeMethod types
-                let parameters = method.GetParameters()
-                let vars = Array.init parameters.Length (fun i -> Var(sprintf "v%d" i, parameters.[i].ParameterType))
-                let body = 
-                    match o with
-                    | Some o -> Expr.Call(o,minfo,vars |> Array.map Expr.Var |> Array.toList)
-                    | None -> Expr.Call(minfo,vars |> Array.map Expr.Var |> Array.toList)
-                let lambda = Array.foldBack (fun x s -> Expr.Lambda(x,s)) vars body
-                FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation lambda :?> 'a
+                tryCache minfo types
+                    (fun () ->
+                        let method = makeMethod types
+                        let lambda = 
+                            let call = 
+                                match o with 
+                                | Some o -> Expr.Call(o,method,args)
+                                | None -> Expr.Call(method,args)
+                            (vs, call)
+                            ||> List.foldBack
+                                (fun v s -> 
+                                    match v with 
+                                    | [v] -> Expr.Lambda(v,s) 
+                                    | l -> failwith "'lambas' tuple not suported" 
+                                )
+                        FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation lambda :?> 'a)
+        | Patterns.Call(o,minfo,args) -> 
+            let makeMethod = makeMethod minfo
+            fun types -> 
+                tryCache minfo types
+                    (fun () ->
+                        let method = makeMethod types
+                        let parameters = method.GetParameters()
+                        let vars = Array.init parameters.Length (fun i -> Var(sprintf "v%d" i, parameters.[i].ParameterType))
+                        let body = 
+                            match o with
+                            | Some o -> Expr.Call(o,minfo,vars |> Array.map Expr.Var |> Array.toList)
+                            | None -> Expr.Call(minfo,vars |> Array.map Expr.Var |> Array.toList)
+                        let lambda = Array.foldBack (fun x s -> Expr.Lambda(x,s)) vars body
+                        FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation lambda :?> 'a)
         | _ -> failwithf "Expecting Expr.Call got: \r\n --------- \r\n %A \r\n ---------" f
 
 type ITemp<'b> =    

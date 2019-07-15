@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <Version>0.0.1</Version>
     <Authors>Kevin Malenfant</Authors>
     <Description>Quotation toolkit</Description>
@@ -9,6 +10,7 @@
     <RepositoryUrl>https://github.com/kevmal/Qit</RepositoryUrl>
     <PackageTags>FSharp Quotations F#</PackageTags>
     <Copyright>Copyright 2019</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>

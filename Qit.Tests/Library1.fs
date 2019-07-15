@@ -105,6 +105,53 @@ module Basic =
             Assert.Equal(<@@ 1 @@>, e)
         | _ -> Assert.Equal(<@@ fun t -> 1 @@>.ToString(), one.ToString())
         
+
+    let allStatic = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static
+    
+    [<QitOp; ReflectedDefinition>]
+    let invokeStatic (tp : Type) (methodName : string) (parameters : 'a) : 'b = 
+        splice(
+            match <@ parameters @> with 
+            | Patterns.NewTuple(exprs) -> 
+                let ptypes = exprs |> List.map (fun x -> x.Type) |> List.toArray
+                match tp.GetMethod(methodName,allStatic,null,ptypes,null) with
+                | null -> failwithf "Method %s with paremters (%s) not found in %s" methodName (ptypes |> Array.map (fun x -> x.Name) |> String.concat ",") tp.Name
+                | m -> Expr.Call(m, exprs) |> Expr.Cast<'b>
+            | Quote <@@()@@> -> 
+                match tp.GetMethod(methodName,allStatic,null,[||],null) with
+                | null -> failwithf "Method %s with no paremters not found in %s" methodName tp.Name
+                | m -> Expr.Call(m, []) |> Expr.Cast<'b>
+            | expr -> 
+                match tp.GetMethod(methodName,allStatic,null,[|expr.Type|],null) with
+                | null -> failwithf "Method %s with paremters (%s) not found in %s" methodName expr.Type.Name tp.Name
+                | m -> Expr.Call(m, [expr]) |> Expr.Cast<'b>
+        )
+    
+    [<Fact>]
+    let ``splice real test case 1 ``() =
+        let v  =
+            <@ 
+                invokeStatic typeof<DateTime> "Parse" ("2010-10-10") : DateTime
+            @>
+            |> Quote.expandOperators
+            |> Quote.evaluate
+        Assert.Equal(DateTime(2010,10,10), v)
+        
+    type StaticMethodNoParameters() = 
+        static member A() = "A"
+
+    [<Fact>]
+    let ``splice real test case 2 ``() =
+        let v  =
+            <@ 
+                invokeStatic typeof<StaticMethodNoParameters> "A" () : string
+            @>
+            |> Quote.expandOperators
+            |> Quote.evaluate
+        Assert.Equal("A", v)
+        
+
+
     [<Fact>]
     let ``splice in splice 1``() = 
         let a = 
@@ -193,6 +240,239 @@ module Basic =
         let v = a |> Quote.expandOperators 
         Assert.Equal(<@ (23 + 32) + (23 + 32) @>, v)
         Assert.Equal(110, v|> Quote.evaluate)
+
+        
+    [<Fact>]
+    let ``splice unchecked 1``() = 
+        let expr = 
+            <@@
+                let ra = ResizeArray<int>()
+                !%%(<@@ 234 @@>)
+                ra.Add(!%%(<@@ "" @@>))
+            @@>
+        expr |> Quote.expandOperatorsUnchecked  |> ignore
+      
+    type TestObj1() = 
+        inherit QitBindingObj()
+        member val C = 0 with get,set
+        [<QitOp; ReflectedDefinition>]
+        member x.Bleh() = 
+            splice (
+                x.C <- x.C + 1
+                Expr.Value x.C |> Expr.Cast<int>)
+
+
+    [<Fact>]
+    let ``splice QitObj 1``() = 
+        let expr = 
+            <@
+                let a = TestObj1()
+                let a1 = a.Bleh()
+                let a2 = a.Bleh()
+                let a3 = a.Bleh()
+                let a4 = a.Bleh()
+                a1,a2,a3,a4
+            @>
+        let v = 
+            expr
+            |> Quote.expandOperators 
+            |> Quote.evaluate
+        Assert.Equal((1,2,3,4), v)
+         
+
+
+    type TestObj2() = 
+        inherit QitBindingObj()
+        let mutable c = 0
+        [<QitOp; ReflectedDefinition>]
+        member x.Bleh() = 
+            splice (
+                c <- c + 1
+                Expr.Value c |> Expr.Cast<int>)
+
+
+    [<Fact>]
+    let ``splice QitObj 2``() = 
+        let expr = 
+            <@
+                let a = TestObj2()
+                let a1 = a.Bleh()
+                let a2 = a.Bleh()
+                let a3 = a.Bleh()
+                let a4 = a.Bleh()
+                a1,a2,a3,a4
+            @>
+        let v = 
+            expr
+            |> Quote.expandOperators 
+            |> Quote.evaluate
+        Assert.Equal((1,2,3,4), v)
+        
+        
+
+    let allInstance = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance
+
+    type RType(tp : Type, e : Expr) = 
+        inherit QitBindingObj()
+        let mutable v = None
+        member x.GetVar() = 
+            match v with 
+            | Some v -> v
+            | None -> 
+                match x.Var with 
+                | Some q -> 
+                    v <- Some(Var(q.Name, e.Type, q.IsMutable))
+                    x.GetVar()
+                | None -> failwith "Unreachable"
+        [<QitOp; ReflectedDefinition>]
+        member x.Invoke(methodName : string, parameters : 'a) = 
+            splice(
+                let oexpr = Expr.Var(x.GetVar())
+                match <@@ parameters @@> with 
+                | Patterns.NewTuple(exprs) -> 
+                    let ptypes = exprs |> List.map (fun x -> x.Type) |> List.toArray
+                    match tp.GetMethod(methodName,allInstance,null,ptypes,null) with
+                    | null -> failwithf "Method %s with paremters (%s) not found in %s" methodName (ptypes |> Array.map (fun x -> x.Name) |> String.concat ",") tp.Name
+                    | m -> Expr.Call(oexpr, m, exprs) |> Expr.Cast<'b>
+                | Quote <@@()@@> -> 
+                    match tp.GetMethod(methodName,allInstance,null,[||],null) with
+                    | null -> failwithf "Method %s with no paremters not found in %s" methodName tp.Name
+                    | m -> Expr.Call(oexpr, m, []) |> Expr.Cast<'b>
+                | expr -> 
+                    match tp.GetMethod(methodName,allInstance,null,[|expr.Type|],null) with
+                    | null -> failwithf "Method %s with paremters (%s) not found in %s" methodName expr.Type.Name tp.Name
+                    | m -> Expr.Call(oexpr, m, [expr]) |> Expr.Cast<'b>
+            )
+        override x.Final(expr) = Expr.Let(x.GetVar(), e, expr)
+
+
+
+    [<QitOp; ReflectedDefinition>]
+    let makeObj (tp : Type) (parameters : 'a) : RType =         
+        let e = 
+            match <@@ parameters @@> with 
+            | Patterns.NewTuple(exprs) -> 
+                let ptypes = exprs |> List.map (fun x -> x.Type) |> List.toArray
+                match tp.GetConstructor(bindAll,null,ptypes,null) with
+                | null -> failwithf "Ctor with paremters (%s) not found in %s" (ptypes |> Array.map (fun x -> x.Name) |> String.concat ",") tp.Name
+                | m -> Expr.NewObject(m, exprs) 
+            | Quote <@@()@@> -> 
+                match tp.GetConstructor(bindAll,null,[||],null) with
+                | null -> failwithf "Ctor with no paremters not found in %s" tp.Name
+                | m -> Expr.NewObject(m, [])
+            | expr -> 
+                match tp.GetConstructor(bindAll,null,[|expr.Type|],null) with
+                | null -> failwithf "Ctor with paremters (%s) not found in %s" expr.Type.Name tp.Name
+                | m -> Expr.NewObject(m, [expr])
+        RType(tp,e)
+ 
+    type TestObj(a : int) = 
+        member x.Vall(b : int) = a + b
+    
+        
+    [<Fact>]
+    let ``splice QitObj 3``() = 
+        let a = 
+            <@
+                let a = makeObj typeof<TestObj> 1
+                let b : int = a.Invoke("Vall", 2)
+                let c : int = a.Invoke("Vall", 0)
+                b + c
+            @>
+            |> Quote.expandOperators
+            |> Quote.evaluate
+        Assert.Equal(4, a)
+        
+        
+
+
+        
+    [<Fact>]
+    let ``splice untyped 1``() = 
+        let map (f: Expr) (o: Expr) = <@@ Option.map !%%f !%%o @@>
+        let expr = map <@ fun x -> x + 1 @> <@ Some 4 @>
+        let v = 
+            expr
+            |> Quote.expandOperatorsUnchecked 
+            |> Quote.expandOperatorsUntypedTest
+            |> Quote.evaluateUntyped
+        Assert.Equal(Some 5, v :?> _)
+         
+         
+    [<Fact>]
+    let ``splice untyped 2``() = 
+        let p = <@@ 1 @@>
+        let expr = 
+            <@@
+                let ra = ResizeArray()
+                ra.Add(!%%p)
+                ra.ToArray()
+            @@>
+        let v = 
+            expr
+            |> Quote.expandOperatorsUnchecked 
+            |> Quote.expandOperatorsUntypedTest
+            |> Quote.evaluateUntyped
+        let v : int [] = Assert.IsType(v)
+        Assert.Equal(1, v.[0])
+         
+                  
+                  
+    [<Fact(Skip="Does not work yet")>]
+    let ``splice untyped 3``() = 
+        let p = <@@ 0 @@>
+        let expr = 
+                     <@@
+                         let ra = ResizeArray()
+                         ra.Add(Unchecked.defaultof<_>)
+                         ra.[0] = !%%p
+                     @@>
+        let v = 
+                     expr
+                     |> Quote.expandOperatorsUnchecked 
+                     |> Quote.expandOperatorsUntypedTest
+                     |> Quote.evaluateUntyped
+        let v : bool = Assert.IsType(v)
+        Assert.Equal(true, v)
+                  
+                           
+        
+        
+    [<Fact>]
+    let ``splice untyped property get 1``() = 
+        let p = <@@ 1 @@>
+        let expr = 
+           <@@
+               let ra = ResizeArray()
+               ra.Add(!%%p)
+               ra.[0]
+           @@>
+        let v = 
+           expr
+           |> Quote.expandOperatorsUnchecked 
+           |> Quote.expandOperatorsUntypedTest
+           |> Quote.evaluateUntyped
+        let v : int = Assert.IsType(v)
+        Assert.Equal(1, v)
+        
+        
+    [<Fact>]
+    let ``splice untyped property set 1``() = 
+        let p = <@@ 1 @@>
+        let expr = 
+           <@@
+               let ra = ResizeArray()
+               ra.Add(!%%p)
+               ra.[0] <- !%%p
+               ra.[0]
+           @@>
+        let v = 
+           expr
+           |> Quote.expandOperatorsUnchecked 
+           |> Quote.expandOperatorsUntypedTest
+           |> Quote.evaluateUntyped
+        let v : int = Assert.IsType(v)
+        Assert.Equal(1, v)
         
     [<Fact(Skip="Var get's inlined and this doesn't work")>]
     let ``replaceVar in splice 1``() = 
@@ -468,6 +748,168 @@ module ProvidedTypes =
         let q = <@fun (a : int []) -> a.[1] + a.[0]@>
         let f = Quote.compileLambda q
         Assert.Equal(9, f [|3;6|])
+    [<Fact>]
+    let ``get field 1``() = 
+        let q = 
+            <@fun (a : DateTime) (ticks) -> 
+                let mutable aa = a
+                aa.Ticks = ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.True(f d d.Ticks)
+    
+    open Qit.Tests.Helpers
+    [<Fact>]
+    let ``get field 2``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                let mutable aa = TypeWithFields(a)
+                aa.A.Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(d.Ticks, f d)
+
+    [<Fact>]
+    let ``get field 3``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                let aa = TypeWithFields(a)
+                aa.A.Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(d.Ticks, f d)
 
 
+    [<Fact>]
+    let ``get field 4``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                a.Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(d.Ticks, f d)
+
+
+    [<Fact>]
+    let ``get field 5``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                let aa = TypeWithFields2(a)
+                aa.A.Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(d.Ticks, f d)
+
+
+
+    [<Fact>]
+    let ``get field 6``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                let mutable aa = TypeWithFields2(a)
+                aa.A.Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(d.Ticks, f d)
+
+
+
+    [<Fact>]
+    let ``get field 7``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                let mutable aa = TypeWithFields3(a)
+                aa.A.[0].Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(d.Ticks, f d)
+
+
+    [<Fact>]
+    let ``get field 8``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                let mutable aa = TypeWithFields4(a)
+                aa.A.[0].Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(d.Ticks, f d)
+
+        
+    [<Fact>]
+    let ``ticks on TimeSpan``() = 
+        let q = 
+            <@fun (x : int) -> 
+                let a = TimeSpan.FromMinutes 30.0
+                a.Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal((TimeSpan.FromMinutes 30.0).Ticks, f 2)
+
+
+        
+        
+    [<Fact>]
+    let ``ticks math 1``() = 
+        let q = 
+            <@fun (x : int) -> 
+                let a = TimeSpan.FromMinutes 30.0
+                let b = TimeSpan.FromMinutes 35.0
+                let c = TimeSpan.FromMinutes 302.0
+                TimeSpan(c.Ticks * ((a.Ticks - b.Ticks) / c.Ticks))
+            @>
+        let a = TimeSpan.FromMinutes 30.0
+        let b = TimeSpan.FromMinutes 35.0
+        let c = TimeSpan.FromMinutes 302.0
+        let result = TimeSpan(c.Ticks * ((a.Ticks - b.Ticks) / c.Ticks))
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        Assert.Equal(result, f 2)
+
+
+
+
+
+    [<Fact>]
+    let ``call field meth 1``() = 
+        let q = 
+            <@fun (a : DateTime) -> 
+                let aa = TypeWithFields4(a)
+                aa.A.[0].AddMinutes(3.0).Ticks
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        let v = 
+            fun (a : DateTime) (b : int) ->
+               let aa = TypeWithFields4(a)
+               aa.A.[0].AddMinutes(3.0).Ticks
+        Assert.Equal(v d 1,f d)
+
+
+    [<Fact>]
+    let ``call field meth 2``() = 
+        let q = 
+            <@fun a offset mins (deltaMin : double) -> 
+                let aa = TypeWithFields3(a)
+                let i = 0
+                ((TimeSpan.FromMinutes mins).Ticks * (((aa.A.[i].AddMinutes deltaMin).Ticks + (TimeSpan.FromMinutes offset).Ticks)/ (TimeSpan.FromMinutes mins).Ticks)) - (TimeSpan.FromMinutes offset).Ticks
+                |> DateTime
+            @>
+        let f = Quote.compileLambda q
+        let d = DateTime.Now
+        let v = 
+            fun a offset mins (deltaMin : double) -> 
+                let aa = TypeWithFields3(a)
+                ((TimeSpan.FromMinutes mins).Ticks * (((aa.A.[0].AddMinutes deltaMin).Ticks + (TimeSpan.FromMinutes offset).Ticks)/ (TimeSpan.FromMinutes mins).Ticks)) - (TimeSpan.FromMinutes offset).Ticks
+                |> DateTime
+        Assert.Equal(v d 0.0 45.0 1.0,f d 0.0 45.0 1.0)
 
