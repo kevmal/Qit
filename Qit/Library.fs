@@ -6,7 +6,7 @@ open System.Reflection
 open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open System.Collections.Generic
-open ProviderImplementation.ProvidedTypes
+open Qit.ProviderImplementation.ProvidedTypes
 
 module Expression = 
     open System.Linq.Expressions
@@ -1382,7 +1382,7 @@ module Quote =
             let scc,v = typed.TryGetValue k
             if scc then Some v else None  
     open Patterns
-    open ProviderImplementation.ProvidedTypes
+    open Qit.ProviderImplementation.ProvidedTypes
     open ReflectionPatterns
     let compileLambdaWithRefs refs (q : Expr<'a>) = 
         let refs = 

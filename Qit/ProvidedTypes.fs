@@ -1,8 +1,9 @@
-﻿// Copyright (c) Microsoft Corporation, Tomas Petricek, Gustavo Guerra, and other contributors
+﻿namespace Qit.Qit
+// Copyright (c) Microsoft Corporation, Tomas Petricek, Gustavo Guerra, and other contributors
 // 
 // Licensed under the MIT License see LICENSE.md in this project
 
-namespace ProviderImplementation.ProvidedTypes
+namespace Qit.ProviderImplementation.ProvidedTypes
 
     #nowarn "1182"
 
@@ -1883,7 +1884,7 @@ namespace ProviderImplementation.ProvidedTypes
 // A lightweight .NET assembly reader that fits in a single F# file.  Based on the well-tested Abstract IL
 // binary reader code.  Used by the type provider to read referenced asssemblies.
 
-namespace ProviderImplementation.ProvidedTypes.AssemblyReader
+namespace Qit.ProviderImplementation.ProvidedTypes.AssemblyReader
 
     #nowarn "1182"
 
@@ -1894,7 +1895,7 @@ namespace ProviderImplementation.ProvidedTypes.AssemblyReader
     open System.IO
     open System.Reflection
     open System.Text
-    open ProviderImplementation.ProvidedTypes
+    open Qit.ProviderImplementation.ProvidedTypes
 
     [<AutoOpen>]
     module Utils =
@@ -6765,7 +6766,7 @@ namespace ProviderImplementation.ProvidedTypes.AssemblyReader
 // targeting F# type providers.
 
 
-namespace ProviderImplementation.ProvidedTypes
+namespace Qit.ProviderImplementation.ProvidedTypes
 
     #nowarn "1182"
 
@@ -6833,7 +6834,7 @@ namespace ProviderImplementation.ProvidedTypes
     open System.IO
     open System.Collections.Generic
     open System.Reflection
-    open ProviderImplementation.ProvidedTypes.AssemblyReader
+    open Qit.ProviderImplementation.ProvidedTypes.AssemblyReader
 
 
     [<AutoOpen>]
@@ -7506,7 +7507,7 @@ namespace ProviderImplementation.ProvidedTypes
         override this.InvokeMember(_name, _invokeAttr, _binder, _target, _args, _modifiers, _culture, _namedParameters) = notRequired this "txILGenericParam: InvokeMember" this.Name
         override this.GetEvents() = this.GetEvents(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.Static) // Needed because TypeDelegator.cs provides a delegting implementation of this, and we are self-delegating
 
-    /// Clones namespaces, type providers, types and members provided by tp, renaming namespace nsp1 into namespace nsp2.
+    /// Clones namespaces, type providers, types and members provided by tp, renaming namespace Qit.nsp1 into namespace Qit.nsp2.
 
     /// Makes a type definition read from a binary available as a System.Type. Not all methods are implemented.
     and TargetTypeDefinition(ilGlobals: ILGlobals, tryBindAssembly: ILAssemblyRef -> Choice<Assembly,exn>, asm: TargetAssembly, declTyOpt: Type option, inp: ILTypeDef) as this =
@@ -8137,9 +8138,9 @@ namespace ProviderImplementation.ProvidedTypes
             File.Delete(tmpFile)
             let simpleName = Path.GetFileNameWithoutExtension(assemblyFileName)
             ProvidedAssembly(AssemblyName(simpleName), assemblyFileName)
-            
+
         new (assemblyName, assemblyFileName) = 
-            ProvidedAssembly(false, assemblyName, assemblyFileName, fun () -> [||])
+            ProvidedAssembly(false, assemblyName, assemblyFileName, K [||])
 
         member __.BelongsToTargetModel = isTgt
 
@@ -8161,7 +8162,7 @@ namespace ProviderImplementation.ProvidedTypes
 //
 // A binding context for cross-targeting type providers
 
-namespace ProviderImplementation.ProvidedTypes
+namespace Qit.ProviderImplementation.ProvidedTypes
 
 
     #nowarn "8796"
@@ -8180,8 +8181,8 @@ namespace ProviderImplementation.ProvidedTypes
     open Microsoft.FSharp.Core.CompilerServices
     open Microsoft.FSharp.Reflection
 
-    open ProviderImplementation.ProvidedTypes
-    open ProviderImplementation.ProvidedTypes.AssemblyReader
+    open Qit.ProviderImplementation.ProvidedTypes
+    open Qit.ProviderImplementation.ProvidedTypes.AssemblyReader
 
     [<AutoOpen>]
     module private ImplementationUtils =
@@ -8736,11 +8737,7 @@ namespace ProviderImplementation.ProvidedTypes
         let targetAssembliesQueue = ResizeArray<_>()
         do targetAssembliesQueue.Add (fun () -> 
               for ref in referencedAssemblyPaths do
-                  //printfn "%s" ref
                   let reader = mkReader ref 
-                  match reader with 
-                  | Choice1Of2 _ -> ()
-                  | Choice2Of2 ex -> printfn "Ex: %s on %s" ex.Message ref
                   let simpleName = Path.GetFileNameWithoutExtension ref 
                   targetAssembliesTable_.[simpleName] <- reader
                   match reader with 
@@ -9108,14 +9105,9 @@ namespace ProviderImplementation.ProvidedTypes
              // Allow a fail on AllowNullLiteralAttribute. Some downlevel FSharp.Core don't have this. 
              // In this case just skip the attribute which means null is allowed when targeting downlevel FSharp.Core.
              match tryConvConstructorRefToTgt x.Constructor  with 
-             | Choice1Of2 _ when x.Constructor.DeclaringType.Name = typeof<AllowNullLiteralAttribute>.Name -> 
-                //printfn "1"
-                None
-             | Choice1Of2 msg -> 
-                //printfn "Fail %A" msg
-                failwith msg
+             | Choice1Of2 _ when x.Constructor.DeclaringType.Name = typeof<AllowNullLiteralAttribute>.Name -> None
+             | Choice1Of2 msg -> failwith msg
              | Choice2Of2 res -> 
-                 //printfn "okay...."
                  Some
                      { new CustomAttributeData () with
                         member __.Constructor =  res
@@ -9271,16 +9263,8 @@ namespace ProviderImplementation.ProvidedTypes
           match assemblyTableFwd.TryGetValue(assembly) with
           | true, newT -> newT
           | false, _ ->
-            let tgtAssembly = ProvidedAssembly(true, assembly.GetName(), assembly.Location, fun () -> convCustomAttributesDataToTgt(assembly.GetCustomAttributesData())) 
-            //printfn "0000000000"
-            //convCustomAttributesDataToTgt(assembly.GetCustomAttributesData())
-            //|> 
-            //    (fun x -> printfn "POOO: %A" x; x)
-            //|> Seq.iter tgtAssembly.AddCustomAttribute
-            //printfn "~~~~"
-            //printfn "%A" (assembly.GetCustomAttributesData())
-            //printfn "===="
-            //printfn "%A" (tgtAssembly.GetCustomAttributesData())
+            let tgtAssembly = ProvidedAssembly(true, assembly.GetName(), assembly.Location, K(convCustomAttributesDataToTgt(assembly.GetCustomAttributesData())))
+
             for (types, enclosingGeneratedTypeNames) in assembly.GetTheTypes() do
                 let typesT = Array.map convProvidedTypeDefToTgt types
                 tgtAssembly.AddTheTypes (typesT, enclosingGeneratedTypeNames) 
@@ -9364,7 +9348,7 @@ namespace ProviderImplementation.ProvidedTypes
 
 #if !NO_GENERATIVE
 
-namespace ProviderImplementation.ProvidedTypes
+namespace Qit.ProviderImplementation.ProvidedTypes
 
     #nowarn "1182"
     module BinaryWriter =
@@ -9384,9 +9368,9 @@ namespace ProviderImplementation.ProvidedTypes
         open Microsoft.FSharp.Core.CompilerServices
         open Microsoft.FSharp.Reflection
 
-        open ProviderImplementation.ProvidedTypes
-        open ProviderImplementation.ProvidedTypes.AssemblyReader
-        open ProviderImplementation.ProvidedTypes.UncheckedQuotations
+        open Qit.ProviderImplementation.ProvidedTypes
+        open Qit.ProviderImplementation.ProvidedTypes.AssemblyReader
+        open Qit.ProviderImplementation.ProvidedTypes.UncheckedQuotations
 
         let formatCodeLabel (x:int) = "L"+string x
 
@@ -13369,7 +13353,7 @@ namespace ProviderImplementation.ProvidedTypes
 //====================================================================================================
 // ProvidedAssembly - model for generated assembly fragments
 
-namespace ProviderImplementation.ProvidedTypes
+namespace Qit.ProviderImplementation.ProvidedTypes
 
     #nowarn "1182"
     open System
@@ -13386,9 +13370,9 @@ namespace ProviderImplementation.ProvidedTypes
     open Microsoft.FSharp.Core.CompilerServices
     open Microsoft.FSharp.Reflection
 
-    open ProviderImplementation.ProvidedTypes
-    open ProviderImplementation.ProvidedTypes.AssemblyReader
-    open ProviderImplementation.ProvidedTypes.UncheckedQuotations
+    open Qit.ProviderImplementation.ProvidedTypes
+    open Qit.ProviderImplementation.ProvidedTypes.AssemblyReader
+    open Qit.ProviderImplementation.ProvidedTypes.UncheckedQuotations
     
 
     type ILLocalBuilder(i: int) =
@@ -13772,6 +13756,7 @@ namespace ProviderImplementation.ProvidedTypes
         let decimalTypeTgt = convTypeToTgt typeof<decimal>
         let convertTypeTgt = convTypeToTgt typeof<System.Convert>
         let stringTypeTgt = convTypeToTgt typeof<string>
+        let mathTypeTgt = convTypeToTgt typeof<System.Math>
 
         let makeTypePattern tp = 
             let tt = convTypeToTgt tp
@@ -13839,25 +13824,146 @@ namespace ProviderImplementation.ProvidedTypes
             | _ ->
                  invalidArg "templateParameter" "The parameter is not a recognized method name"
 
+        let (|MakeDecimal|_|) = 
+            let minfo1 = languagePrimitivesType().GetNestedType("IntrinsicFunctions").GetMethod("MakeDecimal")
+            (fun tm ->
+               match tm with
+               | Call(None, minfo2, args)
+        #if FX_NO_REFLECTION_METADATA_TOKENS
+                  when ( // if metadata tokens are not available we'll rely only on equality of method references
+        #else
+                  when (minfo1.MetadataToken = minfo2.MetadataToken &&
+        #endif
+                        minfo1 = minfo2) ->
+                   Some(args)
+               | _ -> None)
+ 
+        let (|NaN|_|) =
+            let operatorsType = convTypeToTgt (typedefof<list<_>>.Assembly.GetType("Microsoft.FSharp.Core.Operators"))
+            let minfo1 = operatorsType.GetProperty("NaN").GetGetMethod()
+            (fun e -> 
+                match e with
+                | Call(None, minfo2, [])
+        #if FX_NO_REFLECTION_METADATA_TOKENS
+                  when ( // if metadata tokens are not available we'll rely only on equality of method references
+        #else
+                  when (minfo1.MetadataToken = minfo2.MetadataToken &&
+        #endif
+                        minfo1 = minfo2) ->
+                    Some()
+                | _ -> None)
+            
+        let (|NaNSingle|_|) =
+            let operatorsType = convTypeToTgt (typedefof<list<_>>.Assembly.GetType("Microsoft.FSharp.Core.Operators"))
+            let minfo1 = operatorsType.GetProperty("NaNSingle").GetGetMethod()
+            (fun e -> 
+                match e with
+                | Call(None, minfo2, [])
+        #if FX_NO_REFLECTION_METADATA_TOKENS
+                  when ( // if metadata tokens are not available we'll rely only on equality of method references
+        #else
+                  when (minfo1.MetadataToken = minfo2.MetadataToken &&
+        #endif
+                        minfo1 = minfo2) ->
+                    Some()
+                | _ -> None)
+            
+        let (|LessThan|_|) = (|SpecificCall|_|) <@ (<) @>
+        let (|GreaterThan|_|) = (|SpecificCall|_|) <@ (>) @>
+        let (|LessThanOrEqual|_|) = (|SpecificCall|_|) <@ (<=) @>
+        let (|GreaterThanOrEqual|_|) = (|SpecificCall|_|) <@ (>=) @>
+        let (|Equals|_|) = (|SpecificCall|_|) <@ (=) @>
+        let (|NotEquals|_|) = (|SpecificCall|_|) <@ (<>) @>
+        let (|Multiply|_|) = (|SpecificCall|_|) <@ (*) @>
+        let (|Addition|_|) = (|SpecificCall|_|) <@ (+) @>
+        let (|Subtraction|_|) = (|SpecificCall|_|) <@ (-) @>
+        let (|UnaryNegation|_|) = (|SpecificCall|_|) <@ (~-) @>
+        let (|Division|_|) = (|SpecificCall|_|) <@ (/) @>
+        let (|UnaryPlus|_|) = (|SpecificCall|_|) <@ (~+) @>
+        let (|Modulus|_|) = (|SpecificCall|_|) <@ (%) @>
+        let (|LeftShift|_|) = (|SpecificCall|_|) <@ (<<<) @>
+        let (|RightShift|_|) = (|SpecificCall|_|) <@ (>>>) @>
+        let (|And|_|) = (|SpecificCall|_|) <@ (&&&) @>
+        let (|Or|_|) = (|SpecificCall|_|) <@ (|||) @>
+        let (|Xor|_|) = (|SpecificCall|_|) <@ (^^^) @>
+        let (|Not|_|) = (|SpecificCall|_|) <@ (~~~) @>
+        //let (|Compare|_|) = (|SpecificCall|_|) <@ compare @>
+        let (|Max|_|) = (|SpecificCall|_|) <@ max @>
+        let (|Min|_|) = (|SpecificCall|_|) <@ min @>
+        //let (|Hash|_|) = (|SpecificCall|_|) <@ hash @>
+        let (|CallByte|_|) = (|SpecificCall|_|) <@ byte @>
+        let (|CallSByte|_|) = (|SpecificCall|_|) <@ sbyte @>
+        let (|CallUInt16|_|) = (|SpecificCall|_|) <@ uint16 @>
+        let (|CallInt16|_|) = (|SpecificCall|_|) <@ int16 @>
+        let (|CallUInt32|_|) = (|SpecificCall|_|) <@ uint32 @>
+        let (|CallInt|_|) = (|SpecificCall|_|) <@ int @>
+        let (|CallInt32|_|) = (|SpecificCall|_|) <@ int32 @>
+        let (|CallUInt64|_|) = (|SpecificCall|_|) <@ uint64 @>
+        let (|CallInt64|_|) = (|SpecificCall|_|) <@ int64 @>
+        let (|CallSingle|_|) = (|SpecificCall|_|) <@ single @>
+        let (|CallFloat32|_|) = (|SpecificCall|_|) <@ float32 @>
+        let (|CallDouble|_|) = (|SpecificCall|_|) <@ double @>
+        let (|CallFloat|_|) = (|SpecificCall|_|) <@ float @>
+        let (|CallDecimal|_|) = (|SpecificCall|_|) <@ decimal @>
+        let (|CallChar|_|) = (|SpecificCall|_|) <@ char @>
+        let (|Ignore|_|) = (|SpecificCall|_|) <@ ignore @>
+        let (|GetArray|_|) = (|SpecificCall|_|) <@ LanguagePrimitives.IntrinsicFunctions.GetArray @>
+        let (|GetArray2D|_|) = (|SpecificCall|_|) <@ LanguagePrimitives.IntrinsicFunctions.GetArray2D @>
+        let (|GetArray3D|_|) = (|SpecificCall|_|) <@ LanguagePrimitives.IntrinsicFunctions.GetArray3D @>
+        let (|GetArray4D|_|) = (|SpecificCall|_|) <@ LanguagePrimitives.IntrinsicFunctions.GetArray4D @>
+        
+        let (|Abs|_|) = (|SpecificCall|_|) <@ abs @>
+        let (|Acos|_|) = (|SpecificCall|_|) <@ acos @>
+        let (|Asin|_|) = (|SpecificCall|_|) <@ asin @>
+        let (|Atan|_|) = (|SpecificCall|_|) <@ atan @>
+        let (|Atan2|_|) = (|SpecificCall|_|) <@ atan2 @>
+        let (|Ceil|_|) = (|SpecificCall|_|) <@ ceil @>
+        let (|Exp|_|) = (|SpecificCall|_|) <@ exp @>
+        let (|Floor|_|) = (|SpecificCall|_|) <@ floor @>
+        let (|Truncate|_|) = (|SpecificCall|_|) <@ truncate @>
+        let (|Round|_|) = (|SpecificCall|_|) <@ round @>
+        let (|Sign|_|) = (|SpecificCall|_|) <@ sign @>
+        let (|Log|_|) = (|SpecificCall|_|) <@ log @>
+        let (|Log10|_|) = (|SpecificCall|_|) <@ log10 @>
+        let (|Sqrt|_|) = (|SpecificCall|_|) <@ sqrt @>
+        let (|Cos|_|) = (|SpecificCall|_|) <@ cos @>
+        let (|Cosh|_|) = (|SpecificCall|_|) <@ cosh @>
+        let (|Sin|_|) = (|SpecificCall|_|) <@ sin @>
+        let (|Sinh|_|) = (|SpecificCall|_|) <@ sinh @>
+        let (|Tan|_|) = (|SpecificCall|_|) <@ tan @>
+        let (|Tanh|_|) = (|SpecificCall|_|) <@ tanh @>
+        //let (|Range|_|) = (|SpecificCall|_|) <@ (..) @>
+        //let (|RangeStep|_|) = (|SpecificCall|_|) <@ (.. ..) @>
+        let (|Pow|_|) = (|SpecificCall|_|) <@ ( ** ) @>
+        //let (|Pown|_|) = (|SpecificCall|_|) <@ pown @>
+    
+        let mathOp t1 name = 
+            match t1 with 
+            | Double ->
+                let m = mathTypeTgt.GetMethod(name, [|t1|])
+                ilg.Emit(I_call(Normalcall, transMeth m, None))
+            | Single ->
+                ilg.Emit(I_conv DT_R8)
+                let m = mathTypeTgt.GetMethod(name, [|convTypeToTgt typeof<double>|])
+                ilg.Emit(I_call(Normalcall, transMeth m, None))
+                ilg.Emit(I_conv DT_R4)
+            | StaticMethod name [|t1|] m -> 
+                ilg.Emit(I_call(Normalcall, transMeth m, None))
+            | _ -> failwithf "%s not supported for type %s" name t1.Name
 
+        let lessThan (a1 : Expr) (a2 : Expr) = 
+            match <@@ (<) @@> with 
+            | DerivedPatterns.Lambdas(vars,Call(None,meth,_)) -> 
+                let targetType = convTypeToTgt meth.DeclaringType
+                let m = targetType.GetMethod(meth.Name, bindAll).MakeGenericMethod(a1.Type)
+                Expr.Call(m, [a1; a2])
+            | _ -> failwith "Unreachable"
+            
         let isEmpty s = (s = ExpectedStackState.Empty)
         let isAddress s = (s = ExpectedStackState.Address)
         let rec emitLambda(callSiteIlg: ILGenerator, v: Var, body: Expr, freeVars: seq<Var>, lambdaLocals: Dictionary<_, ILLocalBuilder>, parameters) =
             let lambda: ILTypeBuilder = assemblyMainModule.DefineType(UNone, genUniqueTypeName(), TypeAttributes.Class)
-            let fsharpFuncType = convTypeToTgt (typedefof<FSharpFunc<_, _>>)
-            let voidType = convTypeToTgt typeof<System.Void>
-            let rec lambdaType (t : Type) = 
-                if t.IsGenericType then 
-                    let args = t.GetGenericArguments()
-                    let gdef = t.GetGenericTypeDefinition()
-                    if args.Length = 2 && gdef.FullName = fsharpFuncType.FullName && args.[1] = voidType then 
-                        gdef.MakeGenericType(lambdaType args.[0], typeof<unit>)
-                    else
-                        gdef.MakeGenericType(args |> Array.map lambdaType)
-                else
-                    t
-
-            let baseType = convTypeToTgt (lambdaType (typedefof<FSharpFunc<_, _>>.MakeGenericType(v.Type, body.Type)))
+            let baseType = convTypeToTgt (typedefof<FSharpFunc<_, _>>.MakeGenericType(v.Type, body.Type))
             lambda.SetParent(transType baseType)
             let baseCtor = baseType.GetConstructor(bindAll, null, [| |], null)
             if isNull baseCtor then failwithf "Couldn't find default constructor on %O" baseType
@@ -14003,9 +14109,6 @@ namespace ProviderImplementation.ProvidedTypes
                 | false, _ ->
                     failwith "unknown parameter/field"
 
-            | Coerce (arg,ty) when ty.IsAssignableFrom(arg.Type) ->
-                emitExpr expectedState arg
-
             | Coerce (arg,ty) ->
                 // castClass may lead to observable side-effects - InvalidCastException
                 emitExpr ExpectedStackState.Value arg
@@ -14020,7 +14123,14 @@ namespace ProviderImplementation.ProvidedTypes
 
                 popIfEmptyExpected expectedState
                 
-            | SpecificCall <@ (<) @>(None, [t1], [a1; a2]) -> 
+            | NaN -> emitExpr ExpectedStackState.Value <@@ Double.NaN @@>
+
+            | NaNSingle -> emitExpr ExpectedStackState.Value <@@ Single.NaN @@>
+
+            | MakeDecimal(args) -> 
+                emitExpr ExpectedStackState.Value (Expr.NewObjectUnchecked(decimalConstructor(), args))
+
+            | LessThan(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14038,7 +14148,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (<) not supported for type %s" t1.Name
 
            
-            | SpecificCall <@ (>) @>(None, [t1], [a1; a2]) -> 
+            | GreaterThan(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14056,7 +14166,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (>) not supported for type %s" t1.Name
            
            
-            | SpecificCall <@ (<=) @>(None, [t1], [a1; a2]) -> 
+            | LessThanOrEqual(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14082,7 +14192,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (<=) not supported for type %s" t1.Name
            
 
-            | SpecificCall <@ (>=) @>(None, [t1], [a1; a2]) -> 
+            | GreaterThanOrEqual(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14107,7 +14217,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (>=) not supported for type %s" t1.Name
            
-            | SpecificCall <@ (=) @>(None, [t1], [a1; a2]) -> 
+            | Equals(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14122,7 +14232,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (=) not supported for type %s" t1.Name
            
-            | SpecificCall <@ (<>) @>(None, [t1], [a1; a2]) -> 
+            | NotEquals(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14142,7 +14252,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (<>) not supported for type %s" t1.Name
 
-            | SpecificCall <@ (*) @>(None, [t1; t2; _], [a1; a2]) ->
+            | Multiply(None, [t1; t2; _], [a1; a2]) ->
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14156,7 +14266,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (*) not supported for type %s" t1.Name
                 emitConvIfNecessary t1
            
-            | SpecificCall <@ (+) @>(None, [t1; t2; _], [a1; a2]) -> 
+            | Addition(None, [t1; t2; _], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14173,7 +14283,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (+) not supported for type %s" t1.Name
                 emitConvIfNecessary t1
             
-            | SpecificCall <@ (-) @>(None, [t1; t2; _], [a1; a2]) -> 
+            | Subtraction(None, [t1; t2; _], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14187,7 +14297,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (-) not supported for type %s" t1.Name
                 emitConvIfNecessary t1
             
-            | SpecificCall <@ (~-) @>(None, [t1], [a1]) -> 
+            | UnaryNegation(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | SByte 
@@ -14198,7 +14308,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (~-) not supported for type %s" t1.Name
                 
-            | SpecificCall <@ (/) @>(None, [t1; t2; _], [a1; a2]) -> 
+            | Division(None, [t1; t2; _], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14212,7 +14322,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (/) not supported for type %s" t1.Name
                 emitConvIfNecessary t1
 
-            | SpecificCall <@ (~+) @>(None, [t1], [a1]) -> 
+            | UnaryPlus(None, [t1], [a1]) -> 
                 match t1.GetMethod("op_UnaryPlus", [|t1|]) with 
                 | null ->
                     emitExpr expectedState a1
@@ -14220,7 +14330,7 @@ namespace ProviderImplementation.ProvidedTypes
                     emitExpr ExpectedStackState.Value a1
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
             
-            | SpecificCall <@ (%) @>(None, [t1; t2; _], [a1; a2]) -> 
+            | Modulus(None, [t1; t2; _], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14234,7 +14344,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (%%) not supported for type %s" t1.Name
                 emitConvIfNecessary t1
                 
-            | SpecificCall <@ (<<<) @>(None, [t1], [a1; a2]) -> 
+            | LeftShift(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 let maskShift (x : int) =
                     match a2 with 
@@ -14255,7 +14365,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (<<<) not supported for type %s" t1.Name
                 emitConvIfNecessary t1
 
-            | SpecificCall <@ (>>>) @>(None, [t1], [a1; a2]) -> 
+            | RightShift(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 let maskShift (x : int) =
                     match a2 with 
@@ -14276,7 +14386,7 @@ namespace ProviderImplementation.ProvidedTypes
                 | _ -> failwithf "Operator (>>>) not supported for type %s" t1.Name
                 emitConvIfNecessary t1
 
-            | SpecificCall <@ (&&&) @>(None, [t1], [a1; a2]) -> 
+            | And(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14288,7 +14398,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (&&&) not supported for type %s" t1.Name
                         
-            | SpecificCall <@ (|||) @>(None, [t1], [a1; a2]) -> 
+            | Or(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14300,7 +14410,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (|||) not supported for type %s" t1.Name
                         
-            | SpecificCall <@ (^^^) @>(None, [t1], [a1; a2]) -> 
+            | Xor(None, [t1], [a1; a2]) -> 
                 emitExpr ExpectedStackState.Value a1
                 emitExpr ExpectedStackState.Value a2
                 match t1 with 
@@ -14312,7 +14422,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (^^^) not supported for type %s" t1.Name
                 
-            | SpecificCall <@ (~~~) @>(None, [t1], [a1]) -> 
+            | Not(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Int32 | UInt32 
@@ -14322,8 +14432,84 @@ namespace ProviderImplementation.ProvidedTypes
                 | StaticMethod "op_Not" [|t1; t1|] m -> 
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (~~~) not supported for type %s" t1.Name
-                
-            | SpecificCall <@ byte @>(None, [t1], [a1]) ->
+
+            | Max(None, [t1], [a1; a2]) -> 
+                match t1 with 
+                | Double ->
+                    emitExpr ExpectedStackState.Value a1
+                    emitExpr ExpectedStackState.Value a2
+                    let m = mathTypeTgt.GetMethod("Max", [|t1; t1|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | Single ->
+                    emitExpr ExpectedStackState.Value a1
+                    emitExpr ExpectedStackState.Value a2
+                    ilg.Emit(I_conv DT_R8)
+                    let t = convTypeToTgt typeof<double>
+                    let m = mathTypeTgt.GetMethod("Max", [|t;t|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                    ilg.Emit(I_conv DT_R4)
+                | _ -> 
+                    match a1,a2 with 
+                    | (Var _ | Value _), (Var _ | Value _) -> 
+                        Expr.IfThenElseUnchecked(lessThan a1 a2, a2, a1)
+                        |> emitExpr ExpectedStackState.Value
+                    | (Var _ | Value _), _ -> 
+                        let e2 = Var("e2", a2.Type)
+                        Expr.Let(e2, a2,
+                            Expr.IfThenElseUnchecked(lessThan a1 (Expr.Var e2), Expr.Var e2, a1))
+                        |> emitExpr ExpectedStackState.Value
+                    | _, (Var _ | Value _) -> 
+                        let e1 = Var("e1", a1.Type)
+                        Expr.Let(e1, a1,
+                            Expr.IfThenElseUnchecked((lessThan (Expr.Var e1) a2, a2, (Expr.Var e1))))
+                        |> emitExpr ExpectedStackState.Value
+                    | _ -> 
+                        let e1 = Var("e1", a1.Type)
+                        let e2 = Var("e2", a2.Type)
+                        Expr.Let(e1, a1,
+                            Expr.Let(e2, a2,
+                                Expr.IfThenElseUnchecked(lessThan (Expr.Var e1) (Expr.Var e2), Expr.Var e2, Expr.Var e1)))
+                        |> emitExpr ExpectedStackState.Value
+            
+            | Min(None, [t1], [a1; a2]) -> 
+                match t1 with 
+                | Double ->
+                    emitExpr ExpectedStackState.Value a1
+                    emitExpr ExpectedStackState.Value a2
+                    let m = mathTypeTgt.GetMethod("Min", [|t1; t1|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | Single ->
+                    emitExpr ExpectedStackState.Value a1
+                    emitExpr ExpectedStackState.Value a2
+                    ilg.Emit(I_conv DT_R8)
+                    let t = convTypeToTgt typeof<double>
+                    let m = mathTypeTgt.GetMethod("Min", [|t;t|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                    ilg.Emit(I_conv DT_R4)
+                | _ -> 
+                    match a1,a2 with 
+                    | (Var _ | Value _), (Var _ | Value _) -> 
+                        Expr.IfThenElseUnchecked(lessThan a1 a2, a1, a2)
+                        |> emitExpr ExpectedStackState.Value
+                    | (Var _ | Value _), _ -> 
+                        let e2 = Var("e2", a2.Type)
+                        Expr.Let(e2, a2,
+                            Expr.IfThenElseUnchecked(lessThan a1 (Expr.Var e2), a1, Expr.Var e2))
+                        |> emitExpr ExpectedStackState.Value
+                    | _, (Var _ | Value _) -> 
+                        let e1 = Var("e1", a1.Type)
+                        Expr.Let(e1, a1,
+                            Expr.IfThenElseUnchecked((lessThan (Expr.Var e1) a2, Expr.Var e1, a2)))
+                        |> emitExpr ExpectedStackState.Value
+                    | _ -> 
+                        let e1 = Var("e1", a1.Type)
+                        let e2 = Var("e2", a2.Type)
+                        Expr.Let(e1, a1,
+                            Expr.Let(e2, a2,
+                                Expr.IfThenElseUnchecked(lessThan (Expr.Var e1) (Expr.Var e2), Expr.Var e1, Expr.Var e2)))
+                        |> emitExpr ExpectedStackState.Value
+
+            | CallByte(None, [t1], [a1]) ->
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Char
@@ -14340,7 +14526,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'byte' not supported for type %s" t1.Name
 
-            | SpecificCall <@ sbyte @>(None, [t1], [a1]) -> 
+            | CallSByte(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Char
@@ -14357,7 +14543,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'sbyte' not supported for type %s" t1.Name
 
-            | SpecificCall <@ uint16 @>(None, [t1], [a1]) -> 
+            | CallUInt16(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Char
@@ -14374,7 +14560,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'uint16' not supported for type %s" t1.Name
 
-            | SpecificCall <@ int16 @>(None, [t1], [a1]) -> 
+            | CallInt16(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Char
@@ -14391,7 +14577,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'int16' not supported for type %s" t1.Name
 
-            | SpecificCall <@ uint32 @>(None, [t1], [a1]) -> 
+            | CallUInt32(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Char
@@ -14407,8 +14593,8 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'uint32' not supported for type %s" t1.Name
 
-            | SpecificCall <@ int @>(None, [t1], [a1])
-            | SpecificCall <@ int32 @>(None, [t1], [a1]) -> 
+            | CallInt(None, [t1], [a1])
+            | CallInt32(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Char
@@ -14424,7 +14610,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'int32' not supported for type %s" t1.Name
 
-            | SpecificCall <@ uint64 @>(None, [t1], [a1]) -> 
+            | CallUInt64(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Char
@@ -14440,7 +14626,7 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'uint64' not supported for type %s" t1.Name
 
-            | SpecificCall <@ int64 @>(None, [t1], [a1]) -> 
+            | CallInt64(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Double | Single
@@ -14456,8 +14642,8 @@ namespace ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator 'int64' not supported for type %s" t1.Name
 
-            | SpecificCall <@ single @>(None, [t1], [a1])
-            | SpecificCall <@ float32 @>(None, [t1], [a1]) -> 
+            | CallSingle(None, [t1], [a1])
+            | CallFloat32(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Double | Single
@@ -14474,8 +14660,8 @@ namespace ProviderImplementation.ProvidedTypes
                         ilg.Emit(I_call(Normalcall, transMeth m, None))
                     | _ -> failwithf "Operator 'float32' not supported for type %s" t1.Name
 
-            | SpecificCall <@ double @>(None, [t1], [a1])
-            | SpecificCall <@ float @>(None, [t1], [a1]) -> 
+            | CallDouble(None, [t1], [a1])
+            | CallFloat(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Double | Single
@@ -14492,7 +14678,7 @@ namespace ProviderImplementation.ProvidedTypes
                         ilg.Emit(I_call(Normalcall, transMeth m, None))
                     | _ -> failwithf "Operator 'float' not supported for type %s" t1.Name
             
-            | SpecificCall <@ decimal @>(None, [t1], [a1]) ->
+            | CallDecimal(None, [t1], [a1]) ->
                 emitExpr ExpectedStackState.Value a1
                 let rtTgt = decimalTypeTgt
                 if t1 = stringTypeTgt then 
@@ -14515,7 +14701,7 @@ namespace ProviderImplementation.ProvidedTypes
                             ilg.Emit(I_call(Normalcall, transMeth m, None))
                     | toDecimal -> ilg.Emit(I_call(Normalcall, transMeth toDecimal, None)) 
                         
-            | SpecificCall <@ char @>(None, [t1], [a1]) -> 
+            | CallChar(None, [t1], [a1]) -> 
                 emitExpr ExpectedStackState.Value a1
                 match t1 with 
                 | Double | Single
@@ -14530,22 +14716,22 @@ namespace ProviderImplementation.ProvidedTypes
                         ilg.Emit(I_call(Normalcall, transMeth m, None))
                     | _ -> failwithf "Operator 'char' not supported for type %s" t1.Name
             
-            | SpecificCall <@ ignore @>(None, [t1], [a1]) -> emitExpr expectedState a1
+            | Ignore(None, [t1], [a1]) -> emitExpr expectedState a1
 
-            | SpecificCall <@ LanguagePrimitives.IntrinsicFunctions.GetArray @> (None, [ty], [arr; index]) ->
+            | GetArray(None, [ty], [arr; index]) ->
                 // observable side-effect - IndexOutOfRangeException
                 emitExpr ExpectedStackState.Value arr
                 emitExpr ExpectedStackState.Value index
                 if isAddress expectedState then
-                    ilg.Emit(I_ldelema (ILReadonly.NormalAddress, ILArrayShape.SingleDimensional, transType ty))
+                    ilg.Emit(I_ldelema (ILReadonly.ReadonlyAddress, ILArrayShape.SingleDimensional, transType ty))
                 else
                     ilg.Emit(I_ldelem_any (ILArrayShape.SingleDimensional, transType ty))
 
                 popIfEmptyExpected expectedState
 
-            | SpecificCall <@ LanguagePrimitives.IntrinsicFunctions.GetArray2D @> (None, _ty, arr::indices)
-            | SpecificCall <@ LanguagePrimitives.IntrinsicFunctions.GetArray3D @> (None, _ty, arr::indices)
-            | SpecificCall <@ LanguagePrimitives.IntrinsicFunctions.GetArray4D @> (None, _ty, arr::indices) ->
+            | GetArray2D(None, _ty, arr::indices)
+            | GetArray3D(None, _ty, arr::indices)
+            | GetArray4D(None, _ty, arr::indices) ->
 
                 let meth =
                     let name = if isAddress expectedState then "Address" else "Get"
@@ -14563,6 +14749,132 @@ namespace ProviderImplementation.ProvidedTypes
 
                 popIfEmptyExpected expectedState
 
+            | Abs(None, [t1], [a1]) -> 
+                emitExpr ExpectedStackState.Value a1
+                match t1 with 
+                | Int32 | Double | Single | Int64 | Int16 | SByte | Decimal ->
+                    let m = mathTypeTgt.GetMethod("Abs", [|t1|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | StaticMethod "Abs" [|t1|] m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | _ -> failwithf "Abs not supported for type %s" t1.Name
+
+            | Acos(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Acos"
+
+            | Asin(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Asin"
+
+            | Atan(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Atan"
+
+            | Atan2(None, [t1;t2], [a1; a2]) ->
+                emitExpr ExpectedStackState.Value a1
+                emitExpr ExpectedStackState.Value a2
+                match t1 with 
+                | Double ->
+                    let m = mathTypeTgt.GetMethod("Atan2", [|t1; t1|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | Single ->
+                    ilg.Emit(I_conv DT_R8)
+                    let t = convTypeToTgt typeof<double>
+                    let m = mathTypeTgt.GetMethod("Atan2", [|t;t|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                    ilg.Emit(I_conv DT_R4)
+                | StaticMethod "Atan2" [|t1; t1|] m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | _ -> failwithf "Atan2 not supported for type %s" t1.Name
+
+            | Ceil(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Ceiling"
+
+            | Exp(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Exp"
+
+            | Floor(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Floor"
+
+            | Truncate(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Truncate"
+
+            | Round(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Round"
+
+            | Sign(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                match t1 with 
+                | Int32 | Double | Single | Int64 | Int16 | SByte | Decimal ->
+                    let m = mathTypeTgt.GetMethod("Sign", [|t1|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | Single ->
+                    ilg.Emit(I_conv DT_R8)
+                    let m = mathTypeTgt.GetMethod("Sign", [|convTypeToTgt typeof<double>|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                    ilg.Emit(I_conv DT_R4)
+                | StaticMethod "Sign" [|t1|] m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | _ -> failwithf "Sign not supported for type %s" t1.Name
+
+            | Log(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Log"
+
+            | Log10(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Log10"
+
+            | Sqrt(None, [t1; t2], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Sqrt"
+
+            | Cos(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Cos"
+
+            | Cosh(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Cosh"
+
+            | Sin(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Sin"
+
+            | Sinh(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Sinh"
+
+            | Tan(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Tan"
+
+            | Tanh(None, [t1], [a1]) ->
+                emitExpr ExpectedStackState.Value a1
+                mathOp t1 "Tanh"
+
+            | Pow(None, [t1; t2], [a1; a2]) ->
+                emitExpr ExpectedStackState.Value a1
+                emitExpr ExpectedStackState.Value a2
+                match t1 with 
+                | Double ->
+                    let m = mathTypeTgt.GetMethod("Pow", [|t1; t1|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | Single ->
+                    ilg.Emit(I_conv DT_R8)
+                    let t = convTypeToTgt typeof<double>
+                    let m = mathTypeTgt.GetMethod("Pow", [|t;t|])
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                    ilg.Emit(I_conv DT_R4)
+                | StaticMethod "Pow" [|t1; t2|] m -> 
+                    ilg.Emit(I_call(Normalcall, transMeth m, None))
+                | _ -> failwithf "Pow not supported for type %s" t1.Name
 
             | FieldGet (None,field) when field.DeclaringType.IsEnum ->
                 if expectedState <> ExpectedStackState.Empty then
@@ -14779,7 +15091,7 @@ namespace ProviderImplementation.ProvidedTypes
                 let lambdaLocals = Dictionary()
                 emitLambda(ilg, v, body, expr.GetFreeVars(), lambdaLocals, parameterVars)
                 popIfEmptyExpected expectedState
-
+                
             | DefaultValue (t) ->
                 let ilt = transType t
                 let lb = ilg.DeclareLocal ilt
@@ -14948,8 +15260,6 @@ namespace ProviderImplementation.ProvidedTypes
             let assemblyFileName = targetAssembly.Location
             let assemblyBuilder = 
                 let attrs = targetAssembly.GetCustomAttributesData()
-                //printfn "!!!!!"
-                //printfn "%A" (attrs)
                 let cattrs = ResizeArray()
                 defineCustomAttrs cattrs.Add attrs
                 ILAssemblyBuilder(assemblyName, assemblyFileName, ilg, cattrs)
@@ -15246,7 +15556,7 @@ namespace ProviderImplementation.ProvidedTypes
 //-------------------------------------------------------------------------------------------------
 // TypeProviderForNamespaces
 
-namespace ProviderImplementation.ProvidedTypes
+namespace Qit.ProviderImplementation.ProvidedTypes
 
     #nowarn "1182"
     open System
@@ -15263,9 +15573,9 @@ namespace ProviderImplementation.ProvidedTypes
     open Microsoft.FSharp.Core.CompilerServices
     open Microsoft.FSharp.Reflection
 
-    open ProviderImplementation.ProvidedTypes
-    open ProviderImplementation.ProvidedTypes.AssemblyReader
-    open ProviderImplementation.ProvidedTypes.UncheckedQuotations
+    open Qit.ProviderImplementation.ProvidedTypes
+    open Qit.ProviderImplementation.ProvidedTypes.AssemblyReader
+    open Qit.ProviderImplementation.ProvidedTypes.UncheckedQuotations
 
     type TypeProviderForNamespaces(config: TypeProviderConfig, namespacesAndTypes: list<(string * list<ProvidedTypeDefinition>)>, assemblyReplacementMap: (string*string) list, sourceAssemblies: Assembly list, addDefaultProbingLocation: bool) as this =
 
