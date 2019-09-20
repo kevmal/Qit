@@ -448,10 +448,6 @@ module Quote =
                 | _ -> None
             )
 
-    type Bleh = 
-        | SpliceOkay of Expr
-
-            
     let rec genMatch (t1 : Type) (t2 : Type) = 
         if t1.IsGenericType then 
             if t2.IsGenericType then 

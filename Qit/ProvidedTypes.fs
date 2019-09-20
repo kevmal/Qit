@@ -1032,6 +1032,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         inherit MethodInfo()
         let parameterInfos = parameters |> Array.map (fun p -> p :> ParameterInfo)
 
+        let mutable invokeCode = invokeCode
         let mutable declaringType : ProvidedTypeDefinition option = None 
         let mutable attrs = attrs
         let mutable staticParams = staticParams
@@ -1076,6 +1077,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                 this
 
         member __.Parameters = parameters
+        member __.SetInvokeCode(code) = invokeCode <- code
         member __.GetInvokeCode = invokeCode
         member __.StaticParams = staticParams
         member __.StaticParamsApply = staticParamsApply
@@ -1143,6 +1145,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         inherit PropertyInfo()
 
         let mutable declaringType : ProvidedTypeDefinition option = None  
+        let mutable attrs = attrs
 
         let customAttributesImpl = CustomAttributesImpl(isTgt, customAttributesData)
 
@@ -1175,6 +1178,8 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         member __.Getter = getter
         member __.Setter = setter
 
+        member __.SetPropertyAttrs attributes = attrs <- attributes
+        member __.AddPropertyAttrs attributes = attrs <- attrs ||| attributes
         override __.PropertyType = propertyType
         override this.SetValue(_obj, _value, _invokeAttr, _binder, _index, _culture) = notRequired this "SetValue" propertyName
         override this.GetAccessors _nonPublic = notRequired this "nonPublic" propertyName
@@ -1242,6 +1247,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
     and ProvidedField(isTgt: bool, fieldName:string, attrs, fieldType:Type, rawConstantValue: obj, customAttributesData) =
         inherit FieldInfo()
 
+        let mutable fieldName = fieldName
         let mutable declaringType : ProvidedTypeDefinition option = None  
 
         let customAttributesImpl = CustomAttributesImpl(isTgt, customAttributesData)
@@ -1259,13 +1265,15 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         member __.BelongsToTargetModel = isTgt
 
         member __.PatchDeclaringType x = patchOption declaringType (fun () -> declaringType <- Some x)
-
+        
+        member __.AddCustomAttribute attribute = customAttributesImpl.AddCustomAttribute attribute
         override __.GetCustomAttributesData() = customAttributesImpl.GetCustomAttributesData()
 
         // Implement overloads
         override __.FieldType = fieldType
         override __.GetRawConstantValue() = rawConstantValue
         override __.Attributes = attrs
+        member __.SetName name = fieldName <- name
         override __.Name = fieldName
         override __.DeclaringType = declaringType |> nonNone "DeclaringType":> Type
         override __.MemberType: MemberTypes = MemberTypes.Field
@@ -7322,11 +7330,28 @@ namespace Qit.ProviderImplementation.ProvidedTypes
             | _ -> notRequired this "GetNestedTypes" this.Name
 
         override this.GetConstructorImpl(bindingFlags, _binderBinder, _callConvention, types, _modifiers) =
-            let ctors = this.GetConstructors(bindingFlags) |> Array.filter (fun c -> match types with null -> true | t -> c.GetParameters().Length = t.Length)
-            match ctors with
-            | [| |] -> null
-            | [| ci |] -> ci
-            | _ -> failwithf "multiple constructors exist" 
+            let ctors = 
+                this.GetConstructors bindingFlags 
+                |> Array.filter (fun m -> m.Name = ".ctor")
+                |> Array.filter 
+                    (fun m -> 
+                        if m.Name = ".ctor" then 
+                            let parameters = m.GetParameters() 
+                            if parameters.Length = types.Length then
+                                parameters 
+                                |> Seq.zip types 
+                                |> Seq.exists (fun (t,p) -> p.ParameterType <> t)
+                                |> not 
+                            else
+                                false
+                        else
+                            false)
+            if ctors.Length > 1 then failwith "GetConstructorImpl. not support overloads"
+            if ctors.Length > 0 then ctors.[0] else null
+            //match ctors with
+            //| [| |] -> null
+            //| [| ci |] -> ci
+            //| _ -> failwithf "multiple constructors exist" 
 
         override this.GetMethodImpl(name, bindingFlags, _binderBinder, _callConvention, types, _modifiers) =
             match kind with
@@ -8300,12 +8325,26 @@ namespace Qit.ProviderImplementation.ProvidedTypes
 
             // convert TupleGet to the chain of PropertyGet calls (only for generated types)
             | TupleGet(e, i) when isGenerated ->
-                let rec mkGet ty i (e: Expr)  =
-                    let pi, restOpt = Reflection.FSharpValue.PreComputeTuplePropertyInfo(ty, i)
-                    let propGet = Expr.PropertyGetUnchecked(e, pi)
-                    match restOpt with
-                    | None -> propGet
-                    | Some (restTy, restI) -> mkGet restTy restI propGet
+                let rec mkGet (ty : Type) i (e: Expr)  =
+                    if ty.IsValueType then 
+                        let get index =
+                                let fields = ty.GetFields() |> Array.sortBy (fun fi -> fi.Name) 
+                                if index >= fields.Length then
+                                    invalidArg "index" (sprintf "The tuple index '%d' was out of range for tuple type %s" index ty.Name)
+                                fields.[index]
+                        let tupleEncField = 7
+                        let fget = Expr.FieldGetUnchecked(e, get i)
+                        if i < tupleEncField then
+                            fget
+                        else
+                            let etys = ty.GetGenericArguments()
+                            mkGet etys.[tupleEncField] (i - tupleEncField) fget
+                    else
+                        let pi, restOpt = Reflection.FSharpValue.PreComputeTuplePropertyInfo(ty, i)
+                        let propGet = Expr.PropertyGetUnchecked(e, pi)
+                        match restOpt with
+                        | None -> propGet
+                        | Some (restTy, restI) -> mkGet restTy restI propGet
                 simplifyExpr (mkGet e.Type i (simplifyExpr e))
 #endif
 
@@ -8850,7 +8889,8 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                             if toTgt then sprintf "The design-time type '%O' utilized by a type provider was not found in the target reference assembly set '%A'. You may be referencing a profile which contains fewer types than those needed by the type provider you are using." t (getTargetAssemblies() |> Seq.toList)
                             elif getSourceAssemblies() |> Seq.length = 0 then sprintf "A failure occured while determining compilation references"
                             else sprintf "The target type '%O' utilized by a type provider was not found in the design-time assembly set '%A'. Please report this problem to the project site for the type provider." t (getSourceAssemblies() |> Seq.toList)
-                        failwith msg
+                        t // Assume no translation
+                        //failwith msg
                     else
                         match tryGetTypeFromAssembly toTgt t.Assembly.FullName fullName asms.[i] with
                         | Some (newT, canSave) ->
@@ -8925,7 +8965,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                   let parameterTypesT = m.GetParameters() |> Array.map (fun p -> convTypeToTgt p.ParameterType)
                   declTyT.GetMethod(m.Name, bindSome m.IsStatic, null, parameterTypesT, null)
             match mT with
-            | null -> failwithf "Method '%O' not found in type '%O'. This method may be missing in the types available in the target assemblies." m mT
+            | null -> failwithf "Method '%O' not found in type '%O'. This method may be missing in the types available in the target assemblies." m declTyT
             | _ -> 
                 Debug.Assert((match mT with :? ProvidedMethod as x -> x.BelongsToTargetModel | _ -> true), "expected a target ProvidedMethod")
                 mT
@@ -12763,7 +12803,10 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                         | ILScopeRef.Assembly(aref) ->
                             match aref.Version with
                             | USome v -> v
-                            | UNone -> failwith "Expected msorlib to have a version number"
+                            | UNone -> 
+                                let asm = Assembly.GetExecutingAssembly()
+                                Version.Parse (asm.ImageRuntimeVersion.Trim 'v')
+                                //failwith "Expected msorlib to have a version number"
 
                   let entryPointToken, code, codePadding, metadata, data, resources, requiredDataFixups, pdbData, mappings, guidStart =
                     writeILMetadataAndCode ((pdbfile <> None), desiredMetadataVersion, ilg, emitTailcalls, deterministic, showTimes) modul next
@@ -14405,7 +14448,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                 | Int32 | UInt32 
                 | Int64 | UInt64 
                 | Int16 | UInt16 
-                | SByte | Byte -> ilg.Emit(I_and)
+                | SByte | Byte -> ilg.Emit(I_or)
                 | StaticMethod "op_Or" [|t1; t1|] m -> 
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (|||) not supported for type %s" t1.Name
@@ -14417,7 +14460,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                 | Int32 | UInt32 
                 | Int64 | UInt64 
                 | Int16 | UInt16 
-                | SByte | Byte -> ilg.Emit(I_and)
+                | SByte | Byte -> ilg.Emit(I_xor)
                 | StaticMethod "op_Xor" [|t1; t1|] m -> 
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (^^^) not supported for type %s" t1.Name
@@ -14428,7 +14471,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                 | Int32 | UInt32 
                 | Int64 | UInt64 
                 | Int16 | UInt16 
-                | SByte | Byte -> ilg.Emit(I_and)
+                | SByte | Byte -> ilg.Emit(I_not)
                 | StaticMethod "op_Not" [|t1; t1|] m -> 
                     ilg.Emit(I_call(Normalcall, transMeth m, None))
                 | _ -> failwithf "Operator (~~~) not supported for type %s" t1.Name
@@ -15539,7 +15582,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
 #if DEBUG
             printfn "generated binary is at '%s'" assemblyFileName
 #else
-            File.Delete assemblyFileName
+            //File.Delete assemblyFileName
 #endif
 
             // Use a real Reflection Load when running in F# Interactive
