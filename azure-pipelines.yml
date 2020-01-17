@@ -1,0 +1,34 @@
+trigger:
+- master
+
+stages:
+  - stage: build
+    displayName: Build
+    jobs:
+      - job: Linux
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+        - task: DotNetCoreCLI@2
+          inputs:
+            command: 'build'
+            projects: 'MXNetSharp'
+            arguments: '-f netstandard2.0 -c Release'
+            requestedMajorVersion: 3
+          displayName: 'dotnet build Release'
+        # Package a project
+        - task: NuGetCommand@2
+          inputs:
+            command: 'pack'
+            packagesToPack: '**/Qit.fsproj'
+            packDestination: '$(Build.ArtifactStagingDirectory)'
+        - task: NuGetCommand@2
+          inputs:
+            command: 'pack'
+            packagesToPack: '**/Qit.CSharp.fsproj'
+            packDestination: '$(Build.ArtifactStagingDirectory)'
+        - task: NuGetCommand@2
+          inputs:
+            command: 'push'
+            feedsToUse: 'config'
+            includeNugetOrg: true
