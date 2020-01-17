@@ -20,4 +20,5 @@ stages:
         - task: DotNetCoreCLI@2
           inputs:
             command: 'pack'
-            externalEndpoints: $(externalFeedCredential)
+            configuration: 'Release'
+            packagesToPack: 'Qit'
