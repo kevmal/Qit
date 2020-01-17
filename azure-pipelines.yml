@@ -12,13 +12,26 @@ stages:
         - task: DotNetCoreCLI@2
           inputs:
             command: 'build'
+            arguments: '-c Debug'
+            projects: 'Qit'
+            requestedMajorVersion: 3
+          displayName: 'dotnet build Debug'
+        - task: DotNetCoreCLI@2
+          inputs:
+            command: 'test'
+            projects: 'Qit.Tests'
+            arguments: '-c Debug'
+          displayName: 'dotnet test Debug'
+        - task: DotNetCoreCLI@2
+          inputs:
+            command: 'build'
             arguments: '-c Release'
             projects: 'Qit'
             requestedMajorVersion: 3
           displayName: 'dotnet build Release'
-        # Package a project
         - task: DotNetCoreCLI@2
           inputs:
-            command: 'pack'
-            configuration: 'Release'
-            packagesToPack: 'Qit'
+            command: 'test'
+            projects: 'Qit.Tests'
+            arguments: '-c Release'
+          displayName: 'dotnet test Release'
