@@ -17,18 +17,7 @@ stages:
             requestedMajorVersion: 3
           displayName: 'dotnet build Release'
         # Package a project
-        - task: NuGetCommand@2
+        - task: DotNetCoreCLI@2
           inputs:
             command: 'pack'
-            packagesToPack: '**/Qit.fsproj'
-            packDestination: '$(Build.ArtifactStagingDirectory)'
-        - task: NuGetCommand@2
-          inputs:
-            command: 'pack'
-            packagesToPack: '**/Qit.CSharp.fsproj'
-            packDestination: '$(Build.ArtifactStagingDirectory)'
-        - task: NuGetCommand@2
-          inputs:
-            command: 'push'
-            feedsToUse: 'config'
-            includeNugetOrg: true
+            externalEndpoints: $(externalFeedCredential)
