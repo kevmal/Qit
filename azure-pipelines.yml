@@ -12,8 +12,7 @@ stages:
         - task: DotNetCoreCLI@2
           inputs:
             command: 'build'
-            projects: 'MXNetSharp'
-            arguments: '-f netstandard2.0 -c Release'
+            arguments: '-c Release'
             requestedMajorVersion: 3
           displayName: 'dotnet build Release'
         # Package a project
