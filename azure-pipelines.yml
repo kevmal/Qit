@@ -13,6 +13,7 @@ stages:
           inputs:
             command: 'build'
             arguments: '-c Release'
+            projects: 'Qit'
             requestedMajorVersion: 3
           displayName: 'dotnet build Release'
         # Package a project
