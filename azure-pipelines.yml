@@ -5,9 +5,9 @@ stages:
   - stage: build
     displayName: Build
     jobs:
-      - job: Linux
+      - job: Windows
         pool:
-          vmImage: 'ubuntu-latest'
+          vmImage: 'windows-2019'
         steps:
         - task: DotNetCoreCLI@2
           inputs:
