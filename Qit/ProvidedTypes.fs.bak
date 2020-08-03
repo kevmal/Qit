@@ -1021,7 +1021,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         let customAttributesImpl = CustomAttributesImpl(isTgt, customAttributesData)
 
         new (parameters, invokeCode) =
-            ProvidedConstructor(false, MethodAttributes.Public ||| MethodAttributes.RTSpecialName ||| MethodAttributes.HideBySig, Array.ofList parameters, invokeCode, None, false, K [| |])
+            ProvidedConstructor(false, MethodAttributes.Public ||| MethodAttributes.RTSpecialName, Array.ofList parameters, invokeCode, None, false, K [| |])
 
         member __.IsTypeInitializer
             with get() = isStatic() && hasFlag attrs MethodAttributes.Private
@@ -1126,12 +1126,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
        // Implement overloads
         override __.GetParameters() = parameterInfos 
 
-        override this.Attributes = 
-            match invokeCode, this.DeclaringProvidedType with
-            | None, Some pt when pt.IsInterface || pt.IsAbstract -> 
-                    attrs ||| MethodAttributes.Abstract ||| MethodAttributes.Virtual ||| MethodAttributes.HideBySig ||| MethodAttributes.NewSlot
-            | _ -> attrs
-
+        override __.Attributes = attrs
 
         override __.Name = methodName
 
@@ -1303,10 +1298,12 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         member __.AddXmlDoc xmlDoc = customAttributesImpl.AddXmlDoc xmlDoc
         member __.AddObsoleteAttribute (message, ?isError) = customAttributesImpl.AddObsolete (message, defaultArg isError false)
         member __.AddDefinitionLocation(line, column, filePath) = customAttributesImpl.AddDefinitionLocation(line, column, filePath)
+
         member __.SetFieldAttributes attributes = attrs <- attributes
         member __.BelongsToTargetModel = isTgt
 
         member __.PatchDeclaringType x = patchOption declaringType (fun () -> declaringType <- Some x)
+        
         member __.AddCustomAttribute attribute = customAttributesImpl.AddCustomAttribute attribute
         override __.GetCustomAttributesData() = customAttributesImpl.GetCustomAttributesData()
 
@@ -7467,11 +7464,28 @@ namespace Qit.ProviderImplementation.ProvidedTypes
             | _ -> notRequired this "GetNestedTypes" this.Name
 
         override this.GetConstructorImpl(bindingFlags, _binderBinder, _callConvention, types, _modifiers) =
-            let ctors = this.GetConstructors(bindingFlags) |> Array.filter (fun c -> match types with null -> true | t -> let ps = c.GetParameters() in ps.Length = t.Length && (ps, t) ||> Seq.forall2 (fun p ty -> p.ParameterType = ty ) )
-            match ctors with
-            | [| |] -> null
-            | [| ci |] -> ci
-            | _ -> failwithf "multiple constructors exist" 
+            let ctors = 
+                this.GetConstructors bindingFlags 
+                |> Array.filter (fun m -> m.Name = ".ctor")
+                |> Array.filter 
+                    (fun m -> 
+                        if m.Name = ".ctor" then 
+                            let parameters = m.GetParameters() 
+                            if parameters.Length = types.Length then
+                                parameters 
+                                |> Seq.zip types 
+                                |> Seq.exists (fun (t, p) -> p.ParameterType <> t)
+                                |> not 
+                            else
+                                false
+                        else
+                            false)
+            if ctors.Length > 1 then failwith "GetConstructorImpl. not support overloads"
+            if ctors.Length > 0 then ctors.[0] else null
+            //match ctors with
+            //| [| |] -> null
+            //| [| ci |] -> ci
+            //| _ -> failwithf "multiple constructors exist" 
 
         override this.GetMethodImpl(name, bindingFlags, _binderBinder, _callConvention, types, _modifiers) =
             match kind with
@@ -8402,31 +8416,12 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                 member this.MakeGenericType(typeDef: Type, args)= 
                     match typeDef with
                     | :? ProvidedTypeDefinition -> ProvidedTypeSymbol(ProvidedTypeSymbolKind.Generic typeDef, Array.toList args, this) :> Type
-                    | _ -> 
-                        if args |> Array.exists (function :? ProvidedTypeDefinition -> true | _ -> false) then
-                            TypeSymbol(TypeSymbolKind.OtherGeneric typeDef, args, this) :> Type
-                        else
-                            typeDef.MakeGenericType(args)
-                member this.MakeArrayType(typ) = 
-                    match typ with
-                    | :? ProvidedTypeDefinition ->
-                        TypeSymbol(TypeSymbolKind.SDArray, [| typ |], this) :> Type
-                    | _ -> typ.MakeArrayType()
-                member this.MakeRankedArrayType(typ,rank) = 
-                    match typ with
-                    | :? ProvidedTypeDefinition ->
-                        TypeSymbol(TypeSymbolKind.Array rank, [| typ |], this) :> Type
-                    | _ -> typ.MakeArrayType(rank)
-                member this.MakePointerType(typ) = 
-                    match typ with
-                    | :? ProvidedTypeDefinition ->
-                        TypeSymbol(TypeSymbolKind.Pointer, [| typ |], this) :> Type
-                    | _ -> typ.MakePointerType()
-                member this.MakeByRefType(typ) = 
-                    match typ with
-                    | :? ProvidedTypeDefinition ->
-                        TypeSymbol(TypeSymbolKind.ByRef, [| typ |], this) :> Type
-                    | _ -> typ.MakeByRefType()                }
+                    | _ -> TypeSymbol(TypeSymbolKind.OtherGeneric typeDef, args, this) :> Type
+                member this.MakeArrayType(typ) = TypeSymbol(TypeSymbolKind.SDArray, [| typ |], this) :> Type
+                member this.MakeRankedArrayType(typ,rank) = TypeSymbol(TypeSymbolKind.Array rank, [| typ |], this) :> Type
+                member this.MakePointerType(typ) = TypeSymbol(TypeSymbolKind.Pointer, [| typ |], this) :> Type
+                member this.MakeByRefType(typ) = TypeSymbol(TypeSymbolKind.ByRef, [| typ |], this) :> Type
+                }
 
     //--------------------------------------------------------------------------------
     // The quotation simplifier
@@ -8497,6 +8492,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                         | Some (restTy, restI) -> mkGet restTy restI propGet
                 simplifyExpr (mkGet e.Type i (simplifyExpr e))
 #endif
+
 
             | Value(value, ty) ->
                 if value |> isNull |> not then
@@ -16044,4 +16040,3 @@ namespace Qit.ProviderImplementation.ProvidedTypes
 
 #endif 
 #endif
-

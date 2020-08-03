@@ -548,6 +548,20 @@ module Basic =
         | _ -> Assert.False(true)
 
 
+    [<QitOp; ReflectedDefinition>]
+    let qitOp1 (v : int) : int = 
+        splice(
+            let i = <@ v @> |> Quote.evaluate
+            Expr.Value (i + 1000) |> Expr.Cast
+        ) 
+
+    [<Fact>]
+    let ``expand qitop``() =
+        let q1 = <@ qitOp1 22 @> |> Quote.expandOperators
+        Assert.Equal(q1, <@1022@>)
+        //let q2 = <@ 22 |> qitOp1@> |> Quote.expandOperators
+        //Assert.Equal(q2, <@1022@>)
+
 
 (*               
     [<Fact>]
