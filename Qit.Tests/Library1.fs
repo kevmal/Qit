@@ -670,7 +670,7 @@ module CSharp =
     let ``simple expr 1``() = 
         let q = <@ let a = 1 + 2 + 3 in 2 + a@>
         let e = Quote.toCSharpString q
-        Assert.Equal("System.Int32 a = 1 + 2 + 3; 2 +\r\na ;", e)
+        Assert.Equal("System.Int32 a = 1 + 2 + 3;\r\n2 + a;", e)
         Assert.Equal(8, eval q :?> int)
     
     
