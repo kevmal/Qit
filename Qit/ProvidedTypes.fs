@@ -1196,7 +1196,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         new (propertyName, propertyType, ?getterCode, ?setterCode, ?isStatic, ?indexParameters, ?pattrs) =
             let isStatic = defaultArg isStatic false
             let indexParameters = defaultArg indexParameters []
-            let pattrs = defaultArg pattrs (if isStatic then MethodAttributes.Static else enum<MethodAttributes>(0)) ||| MethodAttributes.Public ||| MethodAttributes.SpecialName
+            let pattrs = defaultArg pattrs ((if isStatic then MethodAttributes.Static else enum<MethodAttributes>(0)) ||| MethodAttributes.Public ||| MethodAttributes.SpecialName)
             let getter = getterCode |> Option.map (fun _ -> ProvidedMethod(false, "get_" + propertyName, pattrs, Array.ofList indexParameters, propertyType, getterCode, [], None, K [| |]) :> MethodInfo)
             let setter = setterCode |> Option.map (fun _ -> ProvidedMethod(false, "set_" + propertyName, pattrs, [| yield! indexParameters; yield ProvidedParameter(false, "value", propertyType, isOut=Some false, optionalValue=None) |], typeof<Void>, setterCode, [], None, K [| |]) :> MethodInfo)
             ProvidedProperty(false, propertyName, PropertyAttributes.None, propertyType, isStatic, Option.map K getter, Option.map K setter, Array.ofList indexParameters, K [| |])
