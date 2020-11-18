@@ -1193,10 +1193,10 @@ namespace Qit.ProviderImplementation.ProvidedTypes
         let customAttributesImpl = CustomAttributesImpl(isTgt, customAttributesData)
 
         /// The public constructor for the design-time/source model
-        new (propertyName, propertyType, ?getterCode, ?setterCode, ?isStatic, ?indexParameters) =
+        new (propertyName, propertyType, ?getterCode, ?setterCode, ?isStatic, ?indexParameters, ?pattrs) =
             let isStatic = defaultArg isStatic false
             let indexParameters = defaultArg indexParameters []
-            let pattrs = (if isStatic then MethodAttributes.Static else enum<MethodAttributes>(0)) ||| MethodAttributes.Public ||| MethodAttributes.SpecialName
+            let pattrs = defaultArg pattrs (if isStatic then MethodAttributes.Static else enum<MethodAttributes>(0)) ||| MethodAttributes.Public ||| MethodAttributes.SpecialName
             let getter = getterCode |> Option.map (fun _ -> ProvidedMethod(false, "get_" + propertyName, pattrs, Array.ofList indexParameters, propertyType, getterCode, [], None, K [| |]) :> MethodInfo)
             let setter = setterCode |> Option.map (fun _ -> ProvidedMethod(false, "set_" + propertyName, pattrs, [| yield! indexParameters; yield ProvidedParameter(false, "value", propertyType, isOut=Some false, optionalValue=None) |], typeof<Void>, setterCode, [], None, K [| |]) :> MethodInfo)
             ProvidedProperty(false, propertyName, PropertyAttributes.None, propertyType, isStatic, Option.map K getter, Option.map K setter, Array.ofList indexParameters, K [| |])
@@ -15131,8 +15131,9 @@ namespace Qit.ProviderImplementation.ProvidedTypes
 
                 // Handle the case where this is a generic method instantiated at a type being compiled
                 let mappedMeth = transMeth meth
-
                 match objOpt with
+                | Some(Patterns.Coerce(obj,tp)) when (meth.IsAbstract || meth.IsVirtual) ->
+                    ilg.Emit(mkNormalCall mappedMeth)
                 | Some obj when meth.IsAbstract || meth.IsVirtual  ->
                     if obj.Type.IsValueType then 
                         ilg.Emit(I_callconstraint (Normalcall, transType obj.Type, mappedMeth, None))
