@@ -583,6 +583,7 @@ module Quote =
                         b.Substitute(fun i -> if i = v then Some(e) else None)
                         |> loop inSplice 
                         |> Some
+                    | Patterns.PropertyGet(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.PropertyGetterWithReflectedDefinition(meth), args) 
                     | Patterns.Call(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.MethodWithReflectedDefinition(meth), args) -> 
                         let meth = meth 
                         let args = 
@@ -604,6 +605,7 @@ module Quote =
                                     (fun (e : Expr) (v,a) -> 
                                         e.Substitute(fun x -> if x = v then Some a else None)
                                     ) body
+                            | e -> e
                             | _ -> failwith "Unreachable"
                         res
                         |> loop inSplice 
