@@ -565,6 +565,9 @@ module Quote =
                     | _ -> None
                 )
         loop false expr
+
+    let internal lunbox<'a> x : 'a = unbox x
+    let internal lunboxMethod = match <@ lunbox<obj> (failwith "") @> with | Patterns.Call(_,minfo,_) -> minfo.GetGenericMethodDefinition() | _ -> failwith "lunboxMethod unreachable"
     
     let expandOperatorsUntyped (expr : Expr) = 
         let rec loop inSplice expr = 
@@ -579,7 +582,16 @@ module Quote =
                             body.Substitute(fun x -> if x = var then Some (Expr.Value(b, binding.Type)) else None)
                             |> loop inSplice
                         b.Final(body) |> Some
+                    | Patterns.Let(v,((Patterns.QuoteRaw(q) | Patterns.QuoteTyped(q)) as e),b) when inSplice -> 
+                        b.Substitute(fun i -> if i = v then Some(e) else None)
+                        |> loop inSplice 
+                        |> Some
+                    | Patterns.Let(v,((Patterns.Lambda _ as r) as e),b) when inSplice -> 
+                        b.Substitute(fun i -> if i = v then Some(e) else None)
+                        |> loop inSplice 
+                        |> Some
                     | Patterns.Let(v,e,b) when inSplice -> 
+                        let e = lazyWrap inSplice v.Type e
                         b.Substitute(fun i -> if i = v then Some(e) else None)
                         |> loop inSplice 
                         |> Some
@@ -617,22 +629,26 @@ module Quote =
                         let q = loop true e
                         Some(q |> evaluateUntyped :?> _)
                     | Patterns.Application(Patterns.Lambda(v,b), arg) when inSplice -> 
+                        let arg = lazyWrap inSplice v.Type arg
                         Some(b.Substitute(fun i -> if i = v then Some arg else None) |> loop true)
-                    | Patterns.Let(v, q, b) when inSplice && v.Type = typeof<Expr> ->
-                        let expr = loop true q |> evaluateUntyped :?> Expr
-                        Some(b.Substitute(fun i -> if i = v then Some (Expr.Value expr) else None) |> loop true)
-                    | Patterns.Let(v, q, b) when inSplice && v.Type.IsGenericType && v.Type.GetGenericTypeDefinition() = typedefof<Expr<_>> ->
-                        let expr = loop true q |> evaluateUntyped :?> Expr
-                        let expr = typeof<Expr>.GetMethod("Cast").MakeGenericMethod(v.Type.GetGenericArguments().[0]).Invoke(null, [|expr|])
-                        Some(b.Substitute(fun i -> if i = v then Some (Expr.Value(expr, v.Type)) else None) |> loop true)
                     | Patterns.QuoteRaw q when inSplice -> 
                         Some(Expr.Value(loop false q))
                     | Patterns.QuoteTyped q2 when inSplice -> 
                         let expr = loop false q2
                         let expr = typeof<Expr>.GetMethod("Cast").MakeGenericMethod(q2.Type).Invoke(null, [|expr|])
                         Some(Expr.Value(expr, q.Type))
+                    | Patterns.Call(None, m, [a]) when not inSplice && m.IsGenericMethod && m.GetGenericMethodDefinition() = lunboxMethod -> Some(Expr.Value(evaluateUntyped q, q.Type))
                     | _ -> None
                 )
+        and lazyWrap inSplice tp e = 
+            match e with 
+            | Patterns.Value _ -> e
+            | _ -> 
+                let f = lazy (e |> loop inSplice |> evaluateUntyped)
+                match <@@ lunbox f.Value @@> with 
+                | Patterns.Call(None, minfo, args) -> Expr.Call(minfo.GetGenericMethodDefinition().MakeGenericMethod(tp), args)
+                | _ -> failwithf "unbox never"
+            
         loop false expr
     
     let expandOperators (expr : Expr<'a>) : Expr<'a> =

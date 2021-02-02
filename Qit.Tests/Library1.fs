@@ -166,6 +166,35 @@ module Basic =
             @>
         let v = a |> Quote.expandOperators |> Quote.evaluate
         Assert.Equal(32, v)
+
+        
+
+    [<Fact>]
+    let ``splice in splice with sides 1``() = 
+        let a = 
+            <@ 
+                fun (i : int) -> 
+                    splice
+                        (
+                            let ra = ResizeArray()
+                            <@ 
+                                splice
+                                    (
+                                        ra.Add 1
+                                        ra.Add 1
+                                        ra.Add 1
+                                        let x = <@ 32 @>
+                                        <@
+                                            !%x
+                                        @>
+                                    )
+                            @> |> Quote.expandOperators |> ignore
+                            let c = ra.Count
+                            <@ c + i @>
+                        )
+            @>
+        let v = a |> Quote.expandOperators |> Quote.evaluate
+        Assert.Equal(5, v 2)
         
     [<ReflectedDefinition>]
     let (|TryExprValue|_|) (e : Expr<'a>) : 'a option = 
@@ -238,7 +267,7 @@ module Basic =
                     )
             @>
         let v = a |> Quote.expandOperators 
-        Assert.Equal(<@ (23 + 32) + (23 + 32) @>, v)
+        Assert.Equal(<@ 55 + 55 @>, v)
         Assert.Equal(110, v|> Quote.evaluate)
 
         
@@ -474,7 +503,7 @@ module Basic =
         let v : int = Assert.IsType(v)
         Assert.Equal(1, v)
         
-    [<Fact(Skip="Var get's inlined and this doesn't work")>]
+    [<Fact>]
     let ``replaceVar in splice 1``() = 
         let a : Expr<int> = 
             <@ 
