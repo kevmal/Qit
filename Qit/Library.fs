@@ -163,6 +163,10 @@ type QitBindingObj() =
 
 open ReflectionPatterns
 module Operators = 
+    let escapedQuote (x : 'a Expr) = x
+    let escapedQuoteMeth = (methodInfo <@ escapedQuote @>).GetGenericMethodDefinition()
+    let escapedQuoteRaw (x : Expr) = x
+    let escapedQuoteRawMeth = (methodInfo <@ escapedQuoteRaw @>)
     let spliceUntyped (x : Expr) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
     let spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
     let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
@@ -582,11 +586,16 @@ module Quote =
                             body.Substitute(fun x -> if x = var then Some (Expr.Value(b, binding.Type)) else None)
                             |> loop inSplice
                         b.Final(body) |> Some
-                    | Patterns.Let(v,((Patterns.QuoteRaw(q) | Patterns.QuoteTyped(q)) as e),b) when inSplice -> 
+                    //| Patterns.Let(v,((Patterns.QuoteRaw(q) | Patterns.QuoteTyped(q)) as e),b) when inSplice -> 
+                    //    b.Substitute(fun i -> if i = v then Some(e) else None)
+                    //    |> loop inSplice 
+                    //    |> Some
+                    | Patterns.Let(v,((Patterns.Lambda _ as r) as e),b) when inSplice -> 
                         b.Substitute(fun i -> if i = v then Some(e) else None)
                         |> loop inSplice 
                         |> Some
-                    | Patterns.Let(v,((Patterns.Lambda _ as r) as e),b) when inSplice -> 
+                    | Patterns.Let(v,e,b) when inSplice && e.GetFreeVars() |> Seq.isEmpty -> 
+                        let e = lazyWrap inSplice v.Type e
                         b.Substitute(fun i -> if i = v then Some(e) else None)
                         |> loop inSplice 
                         |> Some
@@ -629,10 +638,17 @@ module Quote =
                         let q = loop true e
                         Some(q |> evaluateUntyped :?> _)
                     | Patterns.Application(Patterns.Lambda(v,b), arg) when inSplice -> 
-                        let arg = lazyWrap inSplice v.Type arg
-                        Some(b.Substitute(fun i -> if i = v then Some arg else None) |> loop true)
+                        if arg.GetFreeVars() |> Seq.isEmpty then 
+                            let arg = lazyWrap inSplice v.Type arg
+                            Some(b.Substitute(fun i -> if i = v then Some arg else None) |> loop true)
+                        else 
+                            Some(b.Substitute(fun i -> if i = v then Some arg else None) |> loop true)
+                    | Patterns.Call(None, m, [Patterns.QuoteRaw q]) when inSplice && m = escapedQuoteRawMeth -> 
+                        Some(Expr.QuoteRaw(loop true q))
                     | Patterns.QuoteRaw q when inSplice -> 
                         Some(Expr.Value(loop false q))
+                    | Patterns.Call(None, m, [Patterns.QuoteTyped q]) when inSplice && m.IsGenericMethod && m.GetGenericMethodDefinition() = escapedQuoteMeth -> 
+                        Some(Expr.QuoteTyped(loop true q))
                     | Patterns.QuoteTyped q2 when inSplice -> 
                         let expr = loop false q2
                         let expr = typeof<Expr>.GetMethod("Cast").MakeGenericMethod(q2.Type).Invoke(null, [|expr|])
