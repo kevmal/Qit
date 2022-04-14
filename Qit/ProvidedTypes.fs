@@ -8373,7 +8373,20 @@ namespace Qit.ProviderImplementation.ProvidedTypes
             | :? TargetTypeDefinition -> failwithf "unexpected target model in ProvidedTypeBuilder.MakeGenericType, stacktrace = %s " Environment.StackTrace
             | :? ProvidedTypeDefinition as ptd when ptd.BelongsToTargetModel -> failwithf "unexpected target model ptd in MakeGenericType, stacktrace = %s " Environment.StackTrace
             | :? ProvidedTypeDefinition -> ProvidedTypeSymbol(ProvidedTypeSymbolKind.Generic genericTypeDefinition, genericArguments, ProvidedTypeBuilder.typeBuilder) :> Type
-            | _ -> TypeSymbol(TypeSymbolKind.OtherGeneric genericTypeDefinition, List.toArray genericArguments, ProvidedTypeBuilder.typeBuilder) :> Type
+            | _ ->
+                let hasProvidedArguments =
+                    genericArguments
+                    |> List.exists (function 
+                        | :? ProvidedTypeDefinition
+                        | :? ProvidedTypeSymbol -> true
+                        | _ -> false )
+                if hasProvidedArguments then
+                    TypeSymbol(TypeSymbolKind.OtherGeneric genericTypeDefinition, List.toArray genericArguments, ProvidedTypeBuilder.typeBuilder) :> Type
+                else
+                    // both genericTypeDefinition and genericArguments are not provided,
+                    // fallback on fx MakeGenericType
+                    genericTypeDefinition.MakeGenericType(List.toArray genericArguments)
+
 
         static member MakeGenericMethod(genericMethodDefinition, genericArguments: Type list) = 
             if genericArguments.Length = 0 then genericMethodDefinition else
@@ -9021,8 +9034,8 @@ namespace Qit.ProviderImplementation.ProvidedTypes
             | true, newT -> newT
             | false, _ ->
                 match t with 
-                | :? ProvidedTypeDefinition as ptd when toTgt (* && ptd.IsErased *) -> 
-                    if ptd.BelongsToTargetModel then failwithf "unexpected erased target ProvidedTypeDefinition '%O'" ptd
+                | :? ProvidedTypeDefinition as ptd when toTgt -> 
+                    if ptd.IsErased && ptd.BelongsToTargetModel then failwithf "unexpected erased target ProvidedTypeDefinition '%O'" ptd
                     // recursively get the provided type.
                     convTypeDefToTgt t
                     
@@ -14063,6 +14076,8 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                     Some()
                 | _ -> None)
             
+        let (|TypeOf|_|) = (|SpecificCall|_|) <@ typeof<obj> @>
+
         let (|LessThan|_|) = (|SpecificCall|_|) <@ (<) @>
         let (|GreaterThan|_|) = (|SpecificCall|_|) <@ (>) @>
         let (|LessThanOrEqual|_|) = (|SpecificCall|_|) <@ (<=) @>
@@ -14334,7 +14349,9 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                     ilg.Emit(I_castclass (transType  targetTy))
 
                 popIfEmptyExpected expectedState
-                
+               
+            | TypeOf(None, [t1], []) -> emitExpr expectedState (Expr.Value(t1)) 
+
             | NaN -> emitExpr ExpectedStackState.Value <@@ Double.NaN @@>
 
             | NaNSingle -> emitExpr ExpectedStackState.Value <@@ Single.NaN @@>
@@ -15158,6 +15175,13 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                 ilg.Emit(I_newobj (transCtorSpec ctor, None))
 
                 popIfEmptyExpected expectedState
+                
+            | DefaultValue (t) ->
+                let ilt = transType t
+                let lb = ilg.DeclareLocal ilt
+                ilg.Emit(I_ldloca lb.LocalIndex)
+                ilg.Emit(I_initobj ilt)
+                ilg.Emit(I_ldloc lb.LocalIndex)
 
             | Value (obj, _ty) ->
                 let rec emitC (v:obj) =
@@ -15304,13 +15328,6 @@ namespace Qit.ProviderImplementation.ProvidedTypes
                 let lambdaLocals = Dictionary()
                 emitLambda(ilg, v, body, expr.GetFreeVars(), lambdaLocals, parameterVars)
                 popIfEmptyExpected expectedState
-                
-            | DefaultValue (t) ->
-                let ilt = transType t
-                let lb = ilg.DeclareLocal ilt
-                ilg.Emit(I_ldloca lb.LocalIndex)
-                ilg.Emit(I_initobj ilt)
-                ilg.Emit(I_ldloc lb.LocalIndex)
 
             | n ->
                 failwithf "unknown expression '%A' in generated method" n
