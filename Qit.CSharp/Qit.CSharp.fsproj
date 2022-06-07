@@ -14,9 +14,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="Script1 - Copy (2) - Copy.fsx" />
+    <None Include="Script1 - Copy (2).fsx" />
+    <None Include="Script1 - Copy.fsx" />
+    <None Include="Script1.fsx" />
     <Compile Include="Library.fs" />
     <Compile Include="trynew.fs" />
+    <Compile Include="trynew2.fs" />
   </ItemGroup>
+
+  <ItemGroup />
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="3.8.0" />

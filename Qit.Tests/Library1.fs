@@ -651,7 +651,8 @@ module CSharp =
         |> Array.rev
         |> Array.skip 3
         |> Array.rev
-        |> Array.map (fun x -> x.Substring(12))
+        //|> Array.map (fun x -> x.Substring(12))
+        |> Array.map (fun x -> x.Trim())
         |> String.concat "\r\n"
         |> (fun x -> Diagnostics.Debug.WriteLine x; x)
         //|> CSharpSyntaxTree.ParseText
@@ -692,14 +693,14 @@ module CSharp =
             let m = t.GetMethod("meth",BindingFlags.Static ||| BindingFlags.Public)
             m.Invoke(null, [||])
         else    
-            failwithf "compile fail\r\n------------------------\r\n%s\r\n------------------------" str
+            failwithf "compile fail\r\n------------------------\r\n%s\r\n------------------------\r\n%A" str  result.Diagnostics
 
 
     [<Fact>]
     let ``simple expr 1``() = 
         let q = <@ let a = 1 + 2 + 3 in 2 + a@>
         let e = Quote.toCSharpString q
-        Assert.Equal("System.Int32 a = 1 + 2 + 3;\r\n2 + a;", e)
+        Assert.Equal("System.Int32 a = ((1 + 2) + 3);\r\n(2 + a);", e)
         Assert.Equal(8, eval q :?> int)
     
     
@@ -716,7 +717,7 @@ module CSharp =
         Assert.Equal("""System.Int32 a = 1;
 System.Int32 b = a;
 System.Int32 a__1 = 2;
-a__1 + b;""", e)
+(a__1 + b);""", e)
         Assert.Equal(3, eval q :?> int)
     
     
@@ -745,7 +746,7 @@ a__1 + b;""", e)
             @> |> Quote.rewriteShadowing
         Assert.Equal(103, eval q :?> int)
     
-    [<Fact(Skip="need to properly support lambdas")>] 
+    [<Fact>]
     let ``shadowing 4``() = 
         let q = 
             <@ 
@@ -757,7 +758,143 @@ a__1 + b;""", e)
             @> |> Quote.rewriteShadowing
         let e = q |> format
         Assert.Equal(15, eval q :?> int)
-    
+    [<Fact>]
+    let ``for loop 1``() = 
+        let q = 
+            <@ 
+                let mutable a = 0
+                for i = 1 to 100 do 
+                    a <- a + i
+                a
+            @> |> Quote.rewriteShadowing
+        let e = q |> format
+        Assert.Equal(5050, eval q :?> int)
+    [<Fact>]
+    let ``while loop 1``() = 
+        let q = 
+            <@ 
+                let mutable a = 0
+                let mutable i = 100
+                while i > 0 do 
+                    a <- a + i
+                    i <- i - 1
+                a
+            @> |> Quote.rewriteShadowing
+        let e = q |> format
+        Assert.Equal(5050, eval q :?> int)
+    [<Fact>]
+    let ``while loop 2``() = 
+        let q = 
+            <@ 
+                let mutable a = 0
+                let mutable i = 100
+                while i > 0 && a < 10000 do 
+                    a <- a + i
+                    i <- i - 1
+                a
+            @> 
+            |> Quote.rewriteConditionals
+            |> Quote.rewriteShadowing
+        let e = q |> format
+        Assert.Equal(5050, eval q :?> int)
+    [<Fact>]
+    let ``let if then else 1``() = 
+        let q = 
+            <@ 
+                let a = 20
+                let b = 
+                    if a < 30 then 
+                        let c = 23
+                        c + 22
+                    else 
+                        let d = 222
+                        d - 22
+                b - 100
+            @> 
+            |> Quote.rewriteConditionals
+            |> Quote.rewriteShadowing
+        let e = q |> format
+        Assert.Equal(-55, eval q :?> int)
+        
+    [<Fact>]
+    let ``new array 1``() = 
+        let q = 
+            <@ 
+                [|
+                    2
+                    3 + 4
+                    1
+                |]
+            @> 
+            |> Quote.rewriteConditionals
+            |> Quote.rewriteShadowing
+        let e = q |> format
+        let a = eval q :?> int []
+        Assert.Equal(3, a.Length)
+        Assert.Equal(2, a[0])
+        Assert.Equal(7, a[1])
+        Assert.Equal(1, a[2])
+
+    [<Fact>]
+    let ``generic type name 1``() = 
+        let q = 
+            <@
+                let check (candies : int []) (k : int64) (d : int) = 
+                    let mutable loop = true
+                    let mutable i = 0
+                    let mutable r = false
+                    while loop do 
+                        if k = 0L then 
+                            r <- true 
+                            loop <- false
+                        elif i >= candies.Length then 
+                            r <- false 
+                            loop <- false
+                        else 
+                            let mutable c = candies.[i]
+                            let mutable k = k
+                            while c > 0 && k > 0 do 
+                                c <- c - d
+                                if c >= 0 then 
+                                    k <- k - 1L
+                            i <- i - 1
+                    r
+                    
+                let maximumCandies (candies : int []) (k : int64) =
+                    let sum =  0L //candies |> Seq.map int64 |> Seq.sum
+                    let maxPer = sum / k |> int
+                    if maxPer <= 1 then 
+                        maxPer
+                    else 
+                        let mutable candidate = 1
+                        let mutable upper = maxPer
+                        while upper > candidate do 
+                            let mid = (upper - candidate) / 2 + 1 + candidate |> min upper
+                            if check candies k mid then 
+                                candidate <- mid
+                            else 
+                                upper <- mid - 1
+                        candidate
+                ()        
+            @>    
+            |> Quote.rewriteConditionals
+            |> Qit.CSharp.Internal.rewriteSeqToLinq
+            |> Qit.CSharp.Internal.Rw.firstPass
+            |> Qit.CSharp.Internal.inlineRightPipe
+            |> Quote.rewriteShadowing
+            |> format
+        let q = 
+            <@ 
+                let f = fun (x : int seq) -> 1
+                ()
+            @>
+            |> Qit.CSharp.Internal.Rw.firstPass
+            |> format
+        
+        Assert.Equal("System.Func<System.Collections.Generic.IEnumerable<System.Int32>, System.Int32> f = ((x) =>\r\n{\r\nreturn 1;\r\n});\r\nnull;",q)
+            
+                  
+
 module ProvidedTypes = 
     [<Fact>]
     let ``simple lambda compile``() = 
@@ -955,4 +1092,88 @@ module ProvidedTypes =
                 ((TimeSpan.FromMinutes mins).Ticks * (((aa.A.[0].AddMinutes deltaMin).Ticks + (TimeSpan.FromMinutes offset).Ticks)/ (TimeSpan.FromMinutes mins).Ticks)) - (TimeSpan.FromMinutes offset).Ticks
                 |> DateTime
         Assert.Equal(v d 0.0 45.0 1.0,f d 0.0 45.0 1.0)
+ 
 
+module Rw = 
+    open Qit.CSharp.Internal.Rw
+    open System.Collections.Generic
+
+    let eq = 
+        {new IEqualityComparer<Expr> with
+             member this.Equals(x: Expr, y: Expr): bool = 
+                let _,_,m = Quote.exprMatch x y
+                m
+             member this.GetHashCode(obj: Expr): int = hash obj
+        }
+    let check (a : Expr) (b : Expr) = Assert.Equal(a,b,eq)
+    [<Fact>]
+    let ``simple if 1``() =
+        <@ 
+            if (let a = 1 in a + 6) > 0 then 
+                2
+            else
+                8
+        @>  
+        |> firstPass
+        |> check 
+            <@ 
+                let mutable __a = initmut
+                __a <- 1
+                let mutable __b = initmut
+                if __a + 6 > 0 then 
+                    __b <- 2
+                else 
+                    __b <- 8
+                __b
+            @>
+            
+    [<Fact>]
+    let ``pipe map 1``() =
+        <@ 
+            [1;2;3]
+            |> List.map (fun x -> x + 1)
+            |> List.map (fun x -> x - 1)
+        @>    
+        |> firstPass
+        |> check 
+            <@ 
+                let __map = fun x -> x + 1
+                let __a1 = fun __l -> List.map __map __l
+                let __map1 = fun x -> x - 1
+                let __a2 = fun __l -> List.map __map1 __l
+                [1;2;3]
+                |> __a1
+                |> __a2
+            @>    
+
+    [<Fact>]
+    let ``while loop 1``() =
+        <@ 
+            let mutable a = 1
+            let mutable b = 10
+            while a < 100 do 
+                b <- a + b
+                a <- a + 1
+            b
+        @>    
+        |> firstPass
+        |> check 
+            <@ 
+                let mutable __a = initmut
+                __a <- 1
+                let mutable __b = initmut
+                __b <- 10
+                while __a < 100 do 
+                    __b <- __a + __b
+                    __a <- __a + 1
+                __b
+            @>    
+
+            
+                
+        
+                
+        
+                
+        
+    
