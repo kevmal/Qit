@@ -12,7 +12,7 @@ open Microsoft.CodeAnalysis.CSharp
 open Microsoft.CodeAnalysis.CSharp.Syntax
 open Microsoft.CodeAnalysis.CSharp
 open Microsoft.CodeAnalysis
-    
+
 let parse (x : string) = CSharpSyntaxTree.ParseText(x).GetRoot().NormalizeWhitespace()
     
 let (|SpecificCall|_|) templateParameter = 

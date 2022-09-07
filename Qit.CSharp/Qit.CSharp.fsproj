@@ -14,6 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="Script1 - Copy (2) - Copy (2).fsx" />
     <None Include="Script1 - Copy (2) - Copy.fsx" />
     <None Include="Script1 - Copy (2).fsx" />
     <None Include="Script1 - Copy.fsx" />

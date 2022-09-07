@@ -168,70 +168,61 @@ let format (q : Expr) =
 open System.Collections.Generic
 
 
+type Player = 
+    {
+        PlayerId : int 
+        mutable Score : int
+    }
 open System.Text
+
+
 let qq = <@@
 
+let (|Empty|_|) s = if String.IsNullOrEmpty s then Some() else None
+let (|Dot|_|) (s : string) = 
+    if s.StartsWith(".") then 
+        Some s.[1..]
+    else 
+        None 
+let (|Digits|_|) (s : string) = 
+    let mutable i = 0 
+    while i < s.Length && Char.IsDigit s.[i] do 
+        i <- i + 1
+    if i > 0 then 
+        Some (s.[i..])
+    else 
+        None
 
-let replicate (count: int) (str: string) =
+let (|MaybeSign|) (s : string) = 
+    if s.StartsWith "+" || s.StartsWith "-" then 
+        s.[1..]
+    else s
 
-    let len = str.Length
+let (|Dec|_|) (s : string) = 
+    match s with 
+    | MaybeSign (Digits (Dot Empty) | Digits (Dot (Digits Empty)) | Dot(Digits Empty)) -> Some()
+    | _ -> None
+    
+let (|Int|_|) (s : string) = 
+    match s with 
+    | MaybeSign (Digits Empty) -> Some ()
+    | _ -> None
+let (|E|_|) (s : string) = 
+    if s.StartsWith "e" || s.StartsWith "E" then 
+        Some s.[1..]
+    else 
+        None
+    
 
-    if len = 0 || count = 0 then
-        String.Empty
 
-    elif len = 1 then
-        new String(str.[0], count)
+let isNumber (s : string) = 
+    match s with  
+    | Dec 
+    | Int 
+    | E Int -> true
+    | _ -> false
 
-    elif count <= 4 then
-        match count with
-        | 1 -> str
-        | 2 -> String.Concat(str, str)
-        | 3 -> String.Concat(str, str, str)
-        | _ -> String.Concat(str, str, str, str)
-
-    else
-        // Using the primitive, because array.fs is not yet in scope. It's safe: both len and count are positive.
-        let target = Array.zeroCreate (len * count)
-
-        let source = str.ToCharArray()
-
-        // O(log(n)) performance loop:
-        // Copy first string, then keep copying what we already copied
-        // (i.e., doubling it) until we reach or pass the halfway point
-        Array.Copy(source, 0, target, 0, len)
-        let mutable i = len
-
-        while i * 2 < target.Length do
-            Array.Copy(target, 0, target, i, i)
-            i <- i * 2
-
-        // finally, copy the remain half, or less-then half
-        Array.Copy(target, 0, target, i, target.Length - i)
-        new String(target)
-let decodeString (s : string) = 
-    let num i = 
-        let mutable x = int s.[i] - 0x30
-        let mutable i = i + 1
-        while i < s.Length && Char.IsDigit s.[i] do 
-            x <- x * 10 + (int s.[i] - 0x30)
-            i <- i + 1
-        i, x
-
-    let sb = StringBuilder()
-    let rec loop i = 
-        if i = s.Length || s.[i] = ']' then 
-            i + 1
-        elif Char.IsDigit s.[i] then 
-            let start = sb.Length
-            let i, n = num i
-            let i = loop (i + 1)
-            sb.Append(sb.ToString(start,sb.Length - start)) |> ignore
-            loop i
-        else 
-            sb.Append(s.[i]) |> ignore
-            loop (i + 1)
-    loop 0 |> ignore
-    sb.ToString()
+   
 
 
 () @@>
@@ -240,7 +231,7 @@ let decodeString (s : string) =
 
 qq
 |> Quote.rewriteConditionals
-//|> rewriteTailCallToWhile
+|> rewriteTailCallToWhile
 //|> rewriteReturnOnLambda
 |> Qit.CSharp.Internal.rewriteSeqToLinq
 |> Quote.traverseQuotation 

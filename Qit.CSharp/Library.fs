@@ -72,6 +72,14 @@ module Internal =
                 | _ -> None
             )
     let csreturn (x : 'a) : 'a = failwith ""
+    let csFakeType () : 'a = failwith ""
+    let csreturnignore (x : 'a) : unit = failwith ""
+    let csreturnmeth = (methodInfo <@ csreturn @>).GetGenericMethodDefinition()
+    let csFakeTypeMeth = (methodInfo <@ csFakeType @>).GetGenericMethodDefinition()
+    let csreturnignoremeth = (methodInfo <@ csreturnignore @>).GetGenericMethodDefinition()
+    let csReturnExpr (x : Expr) = Expr.Call(csreturnmeth.MakeGenericMethod(x.Type),[x])
+    let csFakeTypeExpr (x : Expr) = Expr.Call(csFakeTypeMeth.MakeGenericMethod(x.Type),[])
+    let csReturnIgnoreExpr (x : Expr) = Expr.Call(csreturnignoremeth.MakeGenericMethod(x.Type),[x])
     let (|SpecificCall|_|) templateParameter = 
         match templateParameter with
         | (Lambdas(_, Call(_, minfo1, _)) | Call(_, minfo1, _)) ->
@@ -124,6 +132,8 @@ module Internal =
         else 
             Unsigned
     let (|CsReturn|_|) = (|SpecificCall|_|) <@ csreturn @>
+    let (|CsFakeType|_|) = (|SpecificCall|_|) <@ csFakeType @>
+    let (|CsReturnIgnore|_|) = (|SpecificCall|_|) <@ csreturnignore @>
     let (|TypeOf|_|) = (|SpecificCall|_|) <@ typeof<obj> @>
     let (|LessThan|_|) = (|SpecificCall|_|) <@ (<) @>
     let (|GreaterThan|_|) = (|SpecificCall|_|) <@ (>) @>
@@ -200,7 +210,7 @@ module Internal =
             let targs = t.GetGenericArguments() |> Array.map typeStr
             let name =
                 let name = t.FullName
-                let i = name.LastIndexOf "`"
+                let i = name.IndexOf "`"
                 name.Substring(0,i)
             sprintf "%s<%s>" name (targs |> String.concat ", ")
         else
@@ -209,11 +219,14 @@ module Internal =
     let (|SeqMap|_|) = (|SpecificCall|_|) <@ Seq.map @>
     let select0<'a,'b> f a = <@@ System.Linq.Enumerable.Select(%%a,Func<'a,'b>(%%f)) @@>
     let select = TypeTemplate.create select0
+    let orderBy0<'e,'k> f a = <@@ System.Linq.Enumerable.OrderBy(%%a,Func<'e,'k>(%%f)) :> 'e seq @@>
+    let orderBy = TypeTemplate.create orderBy0
+    let (|SeqSort|_|) = (|SpecificCall|_|) <@ Seq.sort @>
     let (|SeqSum|_|) =
         let x = (methodInfo <@ Seq.map @>).DeclaringType.GetMethod("Sum").GetGenericMethodDefinition()
         fun e -> 
             match e with 
-            | Patterns.Call(None,minfo,[a]) when minfo.GetGenericMethodDefinition() = x -> 
+            | Patterns.Call(None,minfo,[a]) when minfo.IsGenericMethod && minfo.GetGenericMethodDefinition() = x -> 
                 Some (minfo.GetGenericArguments().[0],a)
             | _ -> None
     let sum0<'a> a = 
@@ -228,6 +241,23 @@ module Internal =
                     match q with 
                     | SeqMap (None, [t1;t2], [a1; a2]) -> select [t1;t2] a1 a2 |> Some
                     | SeqSum (t1,a1) -> sum [t1] a1 |> Some
+                    | BindQuote <@ Array.length (Quote.withType "a" : AnyType []) @> (Marker "a" a) -> 
+                        Some(Expr.PropertyGet(a,a.Type.GetProperty("Length")))
+                    | BindQuote <@ Seq.singleton (Quote.any "e") @> (Marker "e" e) -> 
+                        let m = (methodInfo <@ System.Linq.Enumerable.Repeat @>).GetGenericMethodDefinition().MakeGenericMethod(e.Type)
+                        Some(Expr.Call(m,[e;<@ 1 @>]))
+                    | BindQuote <@ Seq.toArray (Quote.withType "e" : AnyType seq) @> (Marker "e" e) -> 
+                        let m = (methodInfo <@ System.Linq.Enumerable.ToArray @>).GetGenericMethodDefinition().MakeGenericMethod(e.Type.GetGenericArguments().[0])
+                        Some(Expr.Call(m,[e]))
+                    | BindQuote <@ Seq.init (Quote.withType "c") (Quote.withType "e" : int -> AnyType) @> (Marker "e" e & Marker "c" c) -> 
+                        let rangeMethod = (methodInfo <@ System.Linq.Enumerable.Range @>)
+                        let range = Expr.Call(rangeMethod,[ <@@ 0 @@>; c])
+                        let _domain,rg = FSharp.Reflection.FSharpType.GetFunctionElements(e.Type)
+                        select [typeof<int>; rg] e range |> Some
+                    | SeqSort (None, [t], [e]) ->
+                        let v = Var("x",t)
+                        let f = Expr.Lambda(v,Expr.Var v)
+                        Some(orderBy [t;t] f e)
                     | _ -> None
                 )
         loop x
@@ -356,6 +386,12 @@ module Internal =
                     let vv = Var("appLambda", func.Type)
                     let e2,func = f canDef scope func
                     ret [yield! e;e2;[{Var = vv; Expr = func}]] (Expr.Applications(Expr.Var(vv),b)) *)
+                | NewTuple(args) -> 
+                    let e,b = args |> List.map (f false scope) |> List.unzip
+                    ret e (Expr.NewTuple(b))
+                | NewObject(cinfo,args) ->
+                    let e,b = args |> List.map (f false scope) |> List.unzip
+                    ret e (Expr.NewObject(cinfo,b))
                 | Applications(func,args) ->  
                     let eb = args |> List.map (fun i -> i |> List.map (f false scope)) 
                     let e = eb |> List.concat |> List.map fst
@@ -368,9 +404,9 @@ module Internal =
                 | IfThenElse(cond, ifTrue, ifFalse) -> 
                     let et = e.Type
                     if et = typeof<unit> then 
-                        let e1,cond = f canDef scope cond
-                        let e2,ifTrue = f canDef scope ifTrue
-                        let e3,ifFalse = f canDef scope ifFalse
+                        let e1,cond = f false scope cond
+                        let e2,ifTrue = f true scope ifTrue
+                        let e3,ifFalse = f true scope ifFalse
                         ret [e1;e2;e3] (Expr.IfThenElse(cond,ifTrue,ifFalse))
                     else 
                         let v = Var(argName(), et, true)
@@ -380,6 +416,7 @@ module Internal =
                         ret [e1;[vr v (unchecked et)];e2;e3] (Expr.Sequential(Expr.IfThenElse(cond,ifTrue,ifFalse), Expr.Var v))
                 | TryWith(body, _filterVar, _filterBody, catchVar, catchBody) -> failwithf "%A" e
                 | TryFinally(body, finallyBody) -> failwithf "%A" e
+                | TupleGet(NI(e1,b1),i) -> ret [e1] (Expr.TupleGet(b1,i))
                 | VarSet(v, ((Let _ | Sequential _ | IfThenElse _) as e)) -> 
                     //printfn "--- %A -----" v.Name
                     //printfn "%A" e
@@ -470,6 +507,54 @@ module Internal =
         open UncheckedQuotations
         open Qit
 
+        let checkTailCall v expr = true
+
+
+        let rec rewriteTailCallToWhile expr = 
+            let reduceOr v f xs = 
+                if Seq.isEmpty xs then 
+                    v
+                else 
+                    xs |> Seq.reduce f
+            expr 
+            |> traverseQuotation
+                (fun q ->
+                    match q with 
+                    | LetRecursive([v, Lambdas(vs,body)],rest) when checkTailCall v body -> 
+                        let vs2 = vs |> Seq.concat |> Seq.map (fun x -> Var(x.Name, x.Type, true)) |> Seq.toArray
+                        let body = (body,Seq.zip vs2 (vs |> Seq.concat)) ||> Seq.fold (fun s (v,p) -> s |> Quote.replaceVar p (Expr.Var v))
+                        let rec loop i = 
+                            match i with 
+                            | Sequential(e1,e2) -> Expr.Sequential(e1, loop e2)
+                            | Let(v,e1,e2) -> Expr.Let(v,e1,loop e2)
+                            | IfThenElse(c,e1,e2) -> 
+                                let t = loop e1
+                                let f = loop e2
+                                Expr.IfThenElse(c,t,f)
+                            | Applications(Var v0, args) when v0 = v -> 
+                                if vs2.Length > 0 then 
+                                    (vs2,args |> Seq.concat) 
+                                    ||> Seq.map2 
+                                        (fun v e -> 
+                                            match e with 
+                                            | Var v2 when v = v2 -> None 
+                                            | _ -> Some(Expr.VarSet(v,e)))
+                                    |> Seq.choose id
+                                    |> reduceOr <@@ () @@> (fun a b -> Expr.Sequential(a,b))
+                                else 
+                                    <@@ () @@>
+                            | q when q.Type <> typeof<unit> -> csReturnIgnoreExpr q
+                        let newBody = loop body
+                        let whl = Expr.Sequential(Expr.WhileLoop(<@@ true @@>, newBody), csFakeTypeExpr body)
+                        if vs2.Length > 0 then 
+                            let whl = (Seq.zip vs2 (vs |> Seq.concat),whl) ||> Seq.foldBack (fun (v,p) s -> Expr.Let(v,Expr.Var p,s))
+                            //let init = (vs2,vs |> Seq.concat) ||> Seq.map2 (fun v e -> Expr.VarSet(v,Expr.Var e)) |> Seq.reduce (fun a b -> Expr.Sequential(a,b))
+                            Some(Expr.Let(v, Rw.lambdas(vs,whl), rewriteTailCallToWhile rest))
+                        else 
+                            Some(Expr.Let(v, Rw.lambdas(vs,whl), rewriteTailCallToWhile rest))
+                    | _ -> None
+                )
+            
         let simple expr = 
             expr 
             |> traverseQuotation
@@ -553,7 +638,7 @@ module Internal =
                         | TupleGet _ ->
                             //printfn "%A" q
                             changeFlag <- true
-                            Some(Expr.Call(Quote.methodInfo <@csreturn@>,[q]))
+                            Some(csReturnExpr q)
                         | _ ->  
                             None
                     )
@@ -561,6 +646,17 @@ module Internal =
                 Some newExpr 
             else
                 None
+        let rewriteReturnOnLambda expr =
+            expr
+            |> traverseQuotation
+                (fun x ->
+                    match x with 
+                    | Lambdas(v,b) ->
+                        let b = rewriteReturn b |> Option.defaultValue b
+                        Some(Rw.lambdas(v, b))
+                    | _ -> None
+                )
+            
         let rewriteAss v expr = 
             let expr = simple expr
             let rec traverseQuotation f q = 
@@ -660,6 +756,40 @@ module Internal =
     let rewriteShadowing expr = 
         let rec expand vars expr = 
             match expr with
+            | Patterns.LetRecursive(l, body) -> 
+                let vs = 
+                    [|
+                        for v,_ in l do 
+                            if Set.contains v.Name vars then 
+                                let name,n = 
+                                    match v.Name with 
+                                    | Rx @"(.*)__(\d+)" g -> g.[1],int g.[2] + 1
+                                    | _ -> v.Name,1
+                                let mutable k = n
+                                let mutable newName = (name + "__" + string k)
+                                while vars.Contains newName || findVarByName newName body do 
+                                    k <- k + 1
+                                    newName <- (name + "__" + string k)
+                                Var(newName,v.Type,v.IsMutable)
+                            else
+                                v
+                    |]
+                let ovs = l |> List.map fst |> List.toArray
+                let sub (e : Expr) = 
+                    let mutable e = e
+                    for i = 0 to vs.Length - 1 do 
+                        e <- e.Substitute(fun v2 -> if v2 = ovs.[i] then Some (Expr.Var vs.[i]) else None)
+                    e
+                let vars = vars |> Set.union (vs |> Seq.map (fun i -> i.Name) |> Set.ofSeq)
+                let l = 
+                    l
+                    |> List.mapi
+                        (fun i (v,e) -> 
+                            vs.[i],sub e
+                        )
+                let l = l |> List.map (fun (v,e) -> v, expand vars e)
+                let body = sub body |> expand vars
+                Expr.LetRecursive(l,body)
             | Patterns.Lambda(v, body) -> 
                 if Set.contains v.Name vars then 
                     let name,n = 
@@ -672,7 +802,8 @@ module Internal =
                         k <- k + 1
                         newName <- (name + "__" + string k)
                     let newVar = Var(newName,v.Type,v.IsMutable)
-                    Expr.Lambda(newVar,body.Substitute(fun v2 -> if v = v2 then Some (Expr.Var newVar) else None))
+                    let body = body.Substitute(fun v2 -> if v = v2 then Some (Expr.Var newVar) else None)
+                    Expr.Lambda(newVar,expand (Set.add newName vars) body)
                 else
                     Expr.Lambda(v,expand (Set.add v.Name vars) body)
             | Patterns.Application(ExprShape.ShapeLambda(v, body), assign)
@@ -688,7 +819,8 @@ module Internal =
                         k <- k + 1
                         newName <- (name + "__" + string k)
                     let newVar = Var(newName,v.Type,v.IsMutable)
-                    Expr.Let(newVar,assign,body.Substitute(fun v2 -> if v = v2 then Some (Expr.Var newVar) else None))
+                    let body = body.Substitute(fun v2 -> if v = v2 then Some (Expr.Var newVar) else None)
+                    Expr.Let(newVar,expand vars assign,expand (Set.add newName vars) body)
                 else
                     Expr.Let(v,expand vars assign,expand (Set.add v.Name vars) body)
             | ExprShape.ShapeVar v -> Expr.Var v
@@ -772,7 +904,10 @@ module Internal =
         | Application(Lambda(v,expr2), expr1) ->
             let e = Expr.Let(v,expr1,expr2)
             ex e
+        | CsFakeType(None,[t1],[]) -> ";" |> parse
+        | CsReturn(None,[t1],[CsFakeType(None,[t2],[])]) -> $";" |> parse
         | CsReturn(None,[t1],[e]) -> $"return {exs e};" |> parse
+        | CsReturnIgnore(None,[t1],[e]) -> $"return {exs e};" |> parse
         | TypeOf(None,[], [e]) ->  $"typeof({exs e})" |> parse
         | NaN ->  "Double.NaN" |> parse
         | NaNSingle -> "Single.NaN" |> parse
@@ -805,7 +940,8 @@ module Internal =
         | CallSByte(None, [t1], [a1]) ->  failwithf "%A" e
         | CallUInt16(None, [t1], [a1]) ->  failwithf "%A" e
         | CallInt16(None, [t1], [a1]) ->  failwithf "%A" e
-        | CallUInt32(None, [t1], [a1]) ->  failwithf "%A" e
+        | CallUInt32(None, [t1], [a1])  when t1 = typeof<string> ->  $"System.UInt32.Parse({exs a1})" |> parse
+        | CallUInt32(None, [t1], [a1]) ->  $"(uint){exs a1}" |> parse
         | CallInt(None, [t1], [a1])
         | CallInt32(None, [t1], [a1]) when t1 = typeof<string> ->  $"System.Int32.Parse({exs a1})" |> parse
         | CallInt(None, [t1], [a1])
@@ -819,7 +955,7 @@ module Internal =
         | CallFloat(None, [t1], [a1]) ->  $"float({exs a1})" |> parse
         | CallDecimal(None, [t1], [a1]) -> failwithf "%A" e
         | CallChar(None, [t1], [a1]) ->  failwithf "%A" e
-        | Ignore(None, [t1], [a1]) ->  "" |> parse
+        | Ignore(None, [t1], [a1]) ->  $"{exs a1};" |> parse
         | GetArray(None, [ty], [arr; index]) -> $"{arr}[{exs index}]" |> parse
         | GetArray2D(None, _ty, arr::indices)
         | GetArray3D(None, _ty, arr::indices)
@@ -845,22 +981,11 @@ module Internal =
         | Tan(None, [t1], [a1]) -> $"Math.Tan({exs a1})" |> parse
         | Tanh(None, [t1], [a1]) -> $"Math.Tanh({exs a1})" |> parse
         | Pow(None, [t1; t2], [a1; a2]) -> $"Math.Pow({exs a1}, {exs a2})"|> parse
+        | Op <@@ "".[0] @@> (a,b) -> sprintf "%s[%s]" (exs a) (exs b) |> parse
         | Op <@@ Array.empty.[0] @@> (a,b) -> sprintf "%s[%s]" (exs a) (exs b) |> parse
         | Cl <@@ Microsoft.FSharp.Core.LanguagePrimitives.IntrinsicFunctions.SetArray @@> (args) 
           & Call(None, methodInfo, exprList) -> 
-            let v = Var("a", args.[2].Type)
-            let expr = rewriteAss v args.[2]
-            match expr with 
-            | Some expr ->
-                expr 
-                |> traverseQuotation
-                    (function 
-                     | VarSet(v0,e) when v0 = v -> 
-                        let exprList2 = [exprList.[0]; exprList.[1]; e]
-                        Some(Expr.Call(methodInfo, exprList2))
-                     | _ -> None)
-                |> ex
-            | None -> sprintf "%s[%s] = %s;" (exs args.[0]) (exs args.[1]) (exs args.[2]) |> parse
+            sprintf "%s[%s] = %s;" (exs args.[0]) (exs args.[1]) (exs args.[2]) |> parse
         | Call(exprOption, methodInfo, exprList) -> 
         //CSharpSyntaxTree.ParseText("System.TimeSpan.FromMinutes(23.0)").GetRoot()
             let o = 
@@ -892,6 +1017,8 @@ module Internal =
         | ForIntegerRangeLoop(var1, expr1, expr2, expr3) -> 
             sprintf "for(int %s = %s; %s <= %s; %s++) { %s }" (var1.Name) (exs expr1) (var1.Name) (exs expr2) (var1.Name) (exs expr3) |> parse
         | IfThenElse(expr1, expr2, expr3) -> 
+            printfn "%A" (expr1, expr2, expr3)
+            printfn "----- %A" (exs expr2)
             match expr1 with
             | Sequential(e1, e2) -> 
                 let iff = Expr.IfThenElse(e2,expr2,expr3)
@@ -934,8 +1061,22 @@ module Internal =
         | LetRecursive([v,(Lambdas(vs,body) as lam)], rest) -> ex(Expr.Let(v,lam,rest))
         | LetRecursive(varExprList, expr) -> failwith "let rec"
         //| Let(var, Lambda(v,b), expr2) -> 
+        | Let(var, Lambdas([[v]], expr), expr2) when v.Type = typeof<unit> -> 
+            let rt = 
+                let rec loop t =
+                    if FSharp.Reflection.FSharpType.IsFunction t then 
+                        FSharp.Reflection.FSharpType.GetFunctionElements(t) |> snd |> loop
+                    else t
+                loop var.Type
+            if rt = typeof<unit> then 
+                sprintf $"System.Action {var.Name} = (() => {{{exs expr}}}); {exs expr2};" |> parse
+            else
+                let expr = 
+                    match rewriteReturn expr with 
+                    | Some x -> x
+                    | None -> expr
+                sprintf $"System.Func<{typeStr rt}> {var.Name} = (() => {{{exs expr}}}); {exs expr2};" |> parse
         | Let(var, Lambdas(vars, expr), expr2) -> 
-
             let tp = 
                 let f x = 
                     match x with 
@@ -964,12 +1105,7 @@ module Internal =
                 sprintf $"System.Func<{tp},{typeStr rt}> {var.Name} = (({ns}) => {{{exs expr}}}); {exs expr2};" |> parse
         | Let(var, BindQuote <@@ Rw.initmut<AnyType> @@> _, expr2) ->
                 sprintf "%s %s; %s;" (typeStr var.Type) var.Name (exs expr2) |> parse
-        | Let(var, expr1, expr2) ->
-            match rewriteAss var expr1 with 
-            | Some x -> 
-                sprintf "%s %s; %s; %s;" (typeStr var.Type) var.Name (exs x) (exs expr2) |> parse
-            | None -> 
-                sprintf "%s %s = %s; %s;" (typeStr var.Type) var.Name (exs expr1) (exs expr2) |> parse
+        | Let(var, expr1, expr2) -> sprintf "%s %s = %s; %s;" (typeStr var.Type) var.Name (exs expr1) (exs expr2) |> parse
             //sprintf "var %s = %s; %s;" var.Name (exs x) (exs expr2) |> parse
         | NewArray(type1, exprList) -> 
             sprintf "new[] {%s}" (exprList |> List.map exs |> String.concat  ",") |> parse
@@ -995,7 +1131,9 @@ module Internal =
         | NewObject(constructorInfo, exprList) -> 
             sprintf "new %s(%s)" (typeStr constructorInfo.DeclaringType) (exprList |> Seq.map exs |> String.concat ", ") |> parse
         | NewRecord(type1, exprList) -> failwith "NewRecord(type1, exprList)"
-        | NewTuple(exprList) -> failwith "NewTuple(exprList)"
+        | NewTuple(exprList) -> 
+            let tps = exprList |> List.map (fun x -> typeStr x.Type) |> String.concat ","
+            exprList |> List.map exs |> String.concat "," |> sprintf "new System.Tuple<%s>(%s)" tps |> parse
         | NewUnionCase(unionCaseInfo, exprList) -> failwith "NewUnionCase(unionCaseInfo, exprList)"
         | PropertyGet(exprOption, propertyInfo, exprList) -> 
             if List.isEmpty exprList |> not then failwith "indexed property get"
@@ -1017,7 +1155,7 @@ module Internal =
             sprintf "%s; %s;" (exs expr1) (exs expr2) |> parse
         | TryFinally(expr1, expr2) -> $"try {{{exs expr1}}} finally {{{exs expr2}}}" |> parse
         | TryWith(expr1, var1, expr2, var2, expr3) -> failwith "TryWith(expr1, var1, expr2, var2, expr3)"
-        | TupleGet(expr, int1) -> failwith "TupleGet(expr, int1)"
+        | TupleGet(expr, int1) -> $"{exs expr}.Item{int1+1}" |> parse
         | TypeTest(expr, type1) -> $"{expr} is {typeStr type1}" |> parse
         | UnionCaseTest(expr, unionCaseInfo) -> failwith "UnionCaseTest(expr, unionCaseInfo)"
         //| ValueWithName(obj1, type1, name) when List.contains name vs -> name

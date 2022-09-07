@@ -626,6 +626,7 @@ module CSharp =
     open FSharp.Quotations
     open Microsoft.CodeAnalysis.CSharp
     open Microsoft.CodeAnalysis
+    open System.Text
 
     type C() = 
         inherit CSharpSyntaxRewriter()
@@ -811,6 +812,7 @@ System.Int32 a__1 = 2;
                         d - 22
                 b - 100
             @> 
+            |> Internal.Rw.firstPass
             |> Quote.rewriteConditionals
             |> Quote.rewriteShadowing
         let e = q |> format
@@ -839,43 +841,34 @@ System.Int32 a__1 = 2;
     let ``generic type name 1``() = 
         let q = 
             <@
-                let check (candies : int []) (k : int64) (d : int) = 
-                    let mutable loop = true
-                    let mutable i = 0
-                    let mutable r = false
-                    while loop do 
-                        if k = 0L then 
-                            r <- true 
-                            loop <- false
-                        elif i >= candies.Length then 
-                            r <- false 
-                            loop <- false
+
+
+
+                let decodeString (s : string) = 
+                    let num i = 
+                        let mutable x = int s.[i] - 0x30
+                        let mutable i = i + 1
+                        while i < s.Length && Char.IsDigit s.[i] do 
+                            x <- x * 10 + (int s.[i] - 0x30)
+                            i <- i + 1
+                        i, x
+
+                    let rec loop (sb : StringBuilder) i = 
+                        if i = s.Length || s.[i] = ']' then 
+                            i + 1, sb.ToString()
+                        elif Char.IsDigit s.[i] then 
+                            let i, n = num i
+                            let i, str = loop (StringBuilder()) (i + 1)
+                            sb.Append(String.replicate n str) |> ignore
+                            loop sb i
                         else 
-                            let mutable c = candies.[i]
-                            let mutable k = k
-                            while c > 0 && k > 0 do 
-                                c <- c - d
-                                if c >= 0 then 
-                                    k <- k - 1L
-                            i <- i - 1
-                    r
-                    
-                let maximumCandies (candies : int []) (k : int64) =
-                    let sum =  0L //candies |> Seq.map int64 |> Seq.sum
-                    let maxPer = sum / k |> int
-                    if maxPer <= 1 then 
-                        maxPer
-                    else 
-                        let mutable candidate = 1
-                        let mutable upper = maxPer
-                        while upper > candidate do 
-                            let mid = (upper - candidate) / 2 + 1 + candidate |> min upper
-                            if check candies k mid then 
-                                candidate <- mid
-                            else 
-                                upper <- mid - 1
-                        candidate
-                ()        
+                            sb.Append(s.[i]) |> ignore
+                            loop sb (i + 1)
+
+                    loop (StringBuilder()) 0 
+
+
+                ()
             @>    
             |> Quote.rewriteConditionals
             |> Qit.CSharp.Internal.rewriteSeqToLinq
@@ -1096,6 +1089,8 @@ module ProvidedTypes =
 
 module Rw = 
     open Qit.CSharp.Internal.Rw
+    open Qit.CSharp.Internal
+    open Qit.CSharp.Internal.Crap
     open System.Collections.Generic
 
     let eq = 
@@ -1169,6 +1164,33 @@ module Rw =
                 __b
             @>    
 
+    [<Fact>]
+    let ``tail call 1``() =
+        <@ 
+            let rec loop i = 
+                if i = 0 then 
+                    10
+                else
+                    loop (i - 1) 
+            loop 10
+        @>    
+        |> rewriteTailCallToWhile
+        |> check 
+            <@ 
+                let loop (i : int) : int = 
+                    let mutable i = i
+                    while true do
+                        if i = 0 then 
+                            csreturnignore 10
+                        else
+                            i <- i - 1
+                    csFakeType()
+                loop 10
+            @>    
+
+            
+                
+        
             
                 
         
