@@ -203,7 +203,7 @@ type IHole<'a> =
     abstract member Marker : 'a
 open  Operators
 module Quote =
-    let toExpression (q : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression q  
+    let toExpression (q : Expr<'a>) = FSharp.Quotations.Evaluator.QuotationEvaluator.ToLinqExpression(q)
     let evaluate(q : Expr<'a>) = evaluate q
     let evaluateUntyped(q : Expr) = evaluateUntyped q 
     let inline hole f = 
