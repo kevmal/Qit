@@ -94,14 +94,8 @@ module internal Core =
         | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, rewriteNestedQuotes body)
         | ExprShape.ShapeVar(v) -> Expr.Var(v)
         
-    let evaluate(q : Expr<'a>) = 
-        //(rewriteNestedQuotes q |> Expr.Cast<'a>)
-        q.Evaluate()
-        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q :?> 'a  
-    let evaluateUntyped(q : Expr) = 
-        //let q2 = (rewriteNestedQuotes q)
-        q.EvaluateUntyped()
-        //FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation q
+    let evaluate(q : Expr<'a>) = q.Evaluate()
+    let evaluateUntyped(q : Expr) = q.EvaluateUntyped()
 
     let rec applySub f q = 
         let rec traverseQuotation acc0 q = 
@@ -203,7 +197,7 @@ type IHole<'a> =
     abstract member Marker : 'a
 open  Operators
 module Quote =
-    let toExpression (q : Expr<'a>) = FSharp.Quotations.Evaluator.QuotationEvaluator.ToLinqExpression(q)
+    let toExpression (q : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression(q)
     let evaluate(q : Expr<'a>) = evaluate q
     let evaluateUntyped(q : Expr) = evaluateUntyped q 
     let inline hole f = 
