@@ -1,7 +1,6 @@
 ﻿namespace Qit
 
 open System
-open Microsoft.FSharp.Core.CompilerServices
 open System.Reflection
 open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
@@ -11,12 +10,29 @@ open Qit.UncheckedQuotations
 
 module Expression = 
     open System.Linq.Expressions
-    let evaluate (e : Expression) = 
-        match e with 
+
+    /// <summary>
+    /// Evaluates a given System.Linq.Expressions.Expression.
+    /// If the expression is a LambdaExpression, it compiles and invokes it directly.
+    /// If the expression is not a LambdaExpression, it wraps the expression in a LambdaExpression with no parameters, compiles and invokes it.
+    /// </summary>
+    /// <param name="expression">The System.Linq.Expressions.Expression to evaluate.</param>
+    /// <returns>The result of the evaluated expression.</returns>
+    let evaluate (expression : Expression) = 
+        match expression with 
         | :? LambdaExpression as f -> f.Compile().DynamicInvoke()
-        | _ -> Expression.Lambda(e, []).Compile().DynamicInvoke()
+        | _ -> Expression.Lambda(expression, []).Compile().DynamicInvoke()
+
+
 
 module Reflection = 
+    /// <summary>
+    /// Decomposes an F# function type into its argument types and return type.
+    /// This function recursively traverses the input type, accumulating argument types in a list.
+    /// When it encounters a type that is not a function, it treats it as the return type.
+    /// </summary>
+    /// <param name="t">The F# function type to decompose.</param>
+    /// <returns>A tuple where the first element is a list of argument types and the second element is the return type.</returns>
     let decomposeFSharpFunctionType (t : Type) = 
         let rec loop (t : Type) acc = 
             if FSharp.Reflection.FSharpType.IsFunction t then 
@@ -26,14 +42,35 @@ module Reflection =
                 List.rev acc, t
         loop t []
 
+    /// <summary>
+    /// Pretty print type name
+    /// </summary>
+    /// <param name="t">Target Type</param>
+    let rec typeToString (t : Type) = 
+        if t.IsGenericType then 
+            let targs = t.GetGenericArguments() |> Array.map typeToString
+            let name =
+                let name = t.FullName
+                let i = name.LastIndexOf "`"
+                name.Substring(0,i)
+            sprintf "%s<%s>" name (targs |> String.concat ", ")
+        else
+            t.FullName
+            
 module ReflectionPatterns = 
-
+    /// <summary>
+    /// Active pattern for decomposing an F# function type into its argument types and return type.
+    /// If the input type is a function, it will match out (args : Type list * returnType : Type).
+    /// </summary>
     let (|FSharpFuncType|_|) (t : Type) = 
         if FSharp.Reflection.FSharpType.IsFunction t then 
             Some(Reflection.decomposeFSharpFunctionType t)
         else
             None
-
+    
+    /// <summary>
+    /// Active pattern for extracting a specific attribute from a MemberInfo.
+    /// </summary>
     let inline (|Attribute|_|) (minfo : MemberInfo) : 'a option = 
         let a  = minfo.GetCustomAttribute<'a>() 
         if isNull(box a) then 
@@ -41,9 +78,15 @@ module ReflectionPatterns =
         else
             Some a
 
+    /// <summary>
+    /// Active pattern for extracting the declaring type of a MemberInfo.
+    /// </summary>
     let (|DeclaringType|) (minfo : MemberInfo) = 
         minfo.DeclaringType
 
+    /// <summary>
+    /// Active pattern for checking if a Type implements a specific interface or inherits from a specific class.
+    /// </summary>
     let (|Implements|_|) (t : Type) : 'a option = 
         let t2 = typeof<'a>
         if t2.IsGenericType then 
@@ -58,7 +101,7 @@ module ReflectionPatterns =
                 None
 
     
-
+/// Type used in pattern matching to allow for wildcard type matching.
 type AnyType = class end 
 
 
@@ -77,13 +120,12 @@ module internal Core =
         else
             methodInfo
 
-
     let castMeth = typeof<Expr>.GetMethod("Cast")
+
     let internal toTypedExpr (e : Expr) = 
         let t = e.Type
         castMeth.MakeGenericMethod(t).Invoke(null, [|e|])
         
-
     let rec internal rewriteNestedQuotes x =
         match x with
         | Patterns.QuoteTyped e -> typeof<Expr>.GetMethod("Value").MakeGenericMethod(x.Type).Invoke(null, [|toTypedExpr e|]) :?> Expr
@@ -133,7 +175,6 @@ module internal Core =
         | Choice1Of2 e -> e
         | Choice2Of2(a,b) -> failwithf "Failed to sub %A for %A in %A" a b q
 
-    //http://www.fssnip.net/1i/title/Traverse-quotation
     let rec traverseQuotation f q = 
         let q = defaultArg (f q) q
         match q with
@@ -146,60 +187,161 @@ module internal Core =
 open Core
     
 
+/// Functions and methods marked as QitOp and ReflectedDefinition will be expanded by Quote.expandOperators
 [<AllowNullLiteral>]
 type QitOpAttribute() = inherit Attribute()
 
+/// TODO
 type QitBindingObj() = 
     abstract member Final : Expr -> Expr
     default x.Final(e) = e
     member val Var : Var option = None with get,set
 
-
 open ReflectionPatterns
-module Operators = 
-    let escapedQuote (x : 'a Expr) = x
-    let escapedQuoteMeth = (methodInfo <@ escapedQuote @>).GetGenericMethodDefinition()
-    let escapedQuoteRaw (x : Expr) = x
-    let escapedQuoteRawMeth = (methodInfo <@ escapedQuoteRaw @>)
-    let spliceUntyped (x : Expr) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
-    let spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
-    let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_> //failwith "quoted code to Expr type"
-    let splice2Meth = (methodInfo <@ splice @>).GetGenericMethodDefinition()
-    [<ReflectedDefinition; QitOp>]
-    let (!%) x = splice x
-    [<ReflectedDefinition; QitOp>]
-    let (!%%) x = spliceUntyped x
 
+[<AutoOpen>]
+module QitOp = 
+    
+    /// <summary>
+    /// Include typed expression as is in quotation.
+    /// </summary>
+    /// <param name="expr">Typed expression to be included</param>
+    let escapedQuote (expr : 'a Expr) = expr
+    let internal escapedQuoteMeth = (methodInfo <@ escapedQuote @>).GetGenericMethodDefinition()
+
+    /// <summary>
+    /// Include untyped expression as is in quotation.
+    /// </summary>
+    /// <param name="expr">Untyped expression to be included</param>
+    let escapedQuoteRaw (x : Expr) = x
+    let internal escapedQuoteRawMeth = (methodInfo <@ escapedQuoteRaw @>)
+
+
+    /// <summary>
+    /// Splice Expr into quotation on Quote.expandOperators
+    /// </summary>
+    /// <param name="expr">Expr to splice in</param>
+    let spliceUntyped (expr : Expr) : 'a = Unchecked.defaultof<_> 
+    let internal spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
+
+    /// <summary>
+    /// Splice Expr<'t> into quotation on Quote.expandOperators
+    /// </summary>
+    /// <param name="expr">Expr<'t> to splice in</param>
+    let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_>
+    let internal splice2Meth = (methodInfo <@ splice @>).GetGenericMethodDefinition()
+
+    /// <summary>
+    /// Splice Expr into quotation on Quote.expandOperators
+    /// </summary>
+    /// <param name="expr">Expr to splice in</param>
+    [<ReflectedDefinition; QitOp>]
+    let (!%) expr = splice expr
+    
+    /// <summary>
+    /// Splice Expr<'t> into quotation on Quote.expandOperators
+    /// </summary>
+    /// <param name="expr">Expr<'t> to splice in</param>
+    [<ReflectedDefinition; QitOp>]
+    let (!%%) expr = spliceUntyped expr
+
+    /// TODO
     let rewriter (input : 'input) (f : Expr list -> Expr -> Expr -> (Expr*Expr) option) : 'a = Unchecked.defaultof<'a>
     let internal rewriterMeth = (methodInfo <@ rewriter @>).GetGenericMethodDefinition()
 
+    /// <summary>
+    /// Get field by FieldInfo. Expands to `Expr.FieldGet(<@ o @>,field)`.
+    /// </summary>
+    /// <param name="field">FieldInfo of field to get</param>
+    /// <param name="o">Target obj</param>
     [<ReflectedDefinition; QitOp>]
     let fieldGet (field : FieldInfo) (o : 'a) : 'b = !%%(Expr.FieldGet(<@ o @>,field))
+    
+    /// <summary>
+    /// Get static field by FieldInfo. Expands to `Expr.FieldGet(field)`.
+    /// </summary>
+    /// <param name="field">FieldInfo of field to get</param>
     [<ReflectedDefinition; QitOp>]
     let fieldGetStatic (field : FieldInfo) : 'a = !%%(Expr.FieldGet(field))
+    
+    /// <summary>
+    /// Set field by FieldInfo. Expands to `Expr.FieldSet(<@o@>,field,<@value@>)`.
+    /// </summary>
+    /// <param name="field">FieldInfo of field to set</param>
+    /// <param name="value">New field value</param>
+    /// <param name="o">Target obj</param>
     [<ReflectedDefinition; QitOp>]
     let fieldSet (field : FieldInfo) (value : 'a) (o : 'b) : unit =
         !%%(Expr.FieldSet(<@o@>,field,<@value@>))
+    
+    /// <summary>
+    /// Set static field by FieldInfo. Expands to `Expr.FieldSet(field,<@value@>)`.
+    /// </summary>
+    /// <param name="field">FieldInfo of field to set</param>
+    /// <param name="value">New field value</param>
     [<ReflectedDefinition; QitOp>]
     let fieldSetStatic (field : FieldInfo) (value : 'a) : unit = 
         !%%(Expr.FieldSet(field,<@value@>))
+
+    /// <summary>
+    /// Call method by MethodInfo. Expands to `Expr.Call(<@o@>,method,args)`.
+    /// </summary>
+    /// <param name="method">MethodInfo of method to call</param>
+    /// <param name="args">Method arguments</param>
+    /// <param name="o">Target obj</param>
     [<ReflectedDefinition; QitOp>]
     let methodCall (method : MethodInfo) (args : obj list) (o : 'a) : 'b = failwith "methodCall"
+    
+    /// <summary>
+    /// Call static method by MethodInfo. Expands to `Expr.Call(method,args)`.
+    /// </summary>
+    /// <param name="method">MethodInfo of method to call</param>
+    /// <param name="args">Method arguments</param>
     [<ReflectedDefinition; QitOp>]
     let methodCallStatic (method : MethodInfo) (args : obj list) : 'c  = failwith "methodCall"
+
+    /// <summary>
+    /// Splice linq expression
+    /// </summary>
+    /// <param name="linqExpr">Linq expression to be cpliced</param>
+    let spliceInExpression (linqExpr : System.Linq.Expressions.Expression) : 'a = failwith ""
+    
+    /// <summary>
+    /// Splice linq expression
+    /// </summary>
+    /// <param name="linqExpr">Linq expression to be cpliced</param>
+    let spliceInExpressionTyped (linqExpr : System.Linq.Expressions.Expression<'a>) : 'a = failwith ""
+    
     
 
+    
+// TODO
 type IHole = 
     abstract member Action : Expr list * Expr -> Expr*Expr
-
+// TODO
 type IHole<'a> = 
     inherit IHole
     abstract member Marker : 'a
-open  Operators
+
 module Quote =
-    let toExpression (q : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression(q)
-    let evaluate(q : Expr<'a>) = evaluate q
-    let evaluateUntyped(q : Expr) = evaluateUntyped q 
+    /// Expr<'a> to System.Linq.Expressions.Expression
+    let toExpression (expr : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression(expr)
+
+    /// <summary>
+    /// Evaluate Expr<'a>
+    /// </summary>
+    /// <param name="expr">Expr<'a> to evaluate</param>
+    /// <returns> Result of evaluation </returns>
+    let evaluate(expr : Expr<'a>) = evaluate expr
+    
+    /// <summary>
+    /// Evaluate Expr
+    /// </summary>
+    /// <param name="expr">Expr to evaluate</param>
+    /// <returns> Result of evaluation </returns>
+    let evaluateUntyped(expr : Expr) = evaluateUntyped expr
+    
+    /// TODO
     let inline hole f = 
         {new IHole<'a> with
              member this.Action(arg2: Expr list, arg3: Expr): Expr*Expr = 
@@ -207,296 +349,112 @@ module Quote =
              member this.Marker: 'a = 
                  raise (System.NotImplementedException()) }
             
+    /// <summary>
+    /// Used within a quotation to match an Expr of any type.
+    /// </summary>
+    /// <param name="name">Name of the marker to later retreive the match</param>
     let any name : AnyType = failwith "marker"
+
+    /// <summary>
+    /// Used within a quotation to match an Expr of specific type.
+    /// </summary>
+    /// <param name="name">Name of the marker to later retreive the match</param>
     let withType<'a> name : 'a = failwith "marker"
 
-    let typed (q : Expr) : Expr<'a> = <@ %%q @>
+    /// <summary>
+    /// Raw Expr to typed Expr
+    /// </summary>
+    /// <param name="expr">Raw Expr to cast</param>
+    /// <returns>Typed Expr</returns>
+    let typed (expr : Expr) : Expr<'a> = <@ %%expr @>
+
+    /// <summary>
+    /// Typed Expr to Raw Expr
+    /// </summary>
+    /// <param name="expr">Typed Expr to cast</param>
+    /// <returns>Raw Expr</returns>
     let untyped (q : Expr<_>) = q.Raw
 
-    let methodInfo q = methodInfo q
+    /// <summary>
+    /// Extract MethodInfo from simple Expr
+    /// </summary>
+    /// <param name="expr">Expr to extract MethodInfo from</param>
+    /// <returns>MethodInfo</returns>
+    let methodInfo expr = methodInfo expr
 
-    let genericMethodInfo q = genericMethodInfo q
+    /// <summary>
+    /// Extract MethodInfo from simple Expr. If the method is generic it will further extract the generic method info.
+    /// </summary>
+    /// <param name="expr">Expr to extract MethodInfo from</param>
+    /// <returns>MethodInfo</returns>
+    let genericMethodInfo expr = genericMethodInfo expr
 
-    let applySub f q = applySub f q
-    let traverseQuotation f q = traverseQuotation f q
+    /// <summary>
+    /// Apply a substitution to the expr.
+    /// </summary>
+    /// <param name="f">Substitutionn</param> //TODO
+    /// <param name="expr">Target Expr</param>
+    let applySubtitution f expr = applySub f expr
+    
+    /// <summary>
+    /// Traverse quotation applying function to each subexpression, if the function returns None the subexpression is left unchanged.
+    /// </summary>
+    /// <param name="f">Traversal function</param>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
+    let traverseQuotation f expr = traverseQuotation f expr
 
-    let replaceVar v1 v2 e =
-        e
+    /// <summary>
+    /// Traverse quotation applying function to each subexpression, if the function returns None the subexpression is left unchanged. Uncheckd version skips type checks when building the Expr.
+    /// </summary>
+    /// <param name="f">Traversal function</param> 
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
+    let rec traverseQuotationUnchecked f expr = UncheckedQuotations.traverseQuotation f expr
+
+    /// <summary>
+    /// Traverse quotation applying function to each subexpression, if the function returns None the subexpression is left unchanged. 
+    /// If the function returns Some(true,expr) the subexpression is replaced with expr and the traversal continues on expr.
+    /// If the function returns Some(false,expr) the subexpression is replaced with expr and the traversal stops.
+    /// </summary>
+    /// <param name="f">Traversal function</param>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
+    let rec traverseQuotationRec f expr = 
+        let rec loop q = 
+            match f q with 
+            | Some(true,q) -> loop q
+            | Some(false,q) -> q
+            | None -> q
+        let q = loop expr
+        match q with
+        | ExprShape.ShapeCombination(a, args) -> 
+            let nargs = args |> List.map (traverseQuotationRec f)
+            ExprShape.RebuildShapeCombination(a, nargs)
+        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotationRec f body)
+        | ExprShape.ShapeVar(v) -> Expr.Var(v)
+    
+    /// <summary>
+    /// Replace every occurence of targetVar with replacementVar in expr.
+    /// </summary>
+    /// <param name="targetVar">Target var</param>
+    /// <param name="replacementVar">Replacement Var</param>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
+    let replaceVar targetVar replacementVar expr =
+        expr
         |> traverseQuotation
             (fun q -> 
                 match q with 
-                | Patterns.Var(v) when v = v1 -> Some(v2)
+                | Patterns.Var(v) when v = targetVar -> Some(replacementVar)
                 | _ -> None
             )
 
-    let rec genMatch (t1 : Type) (t2 : Type) = 
-        if t1.IsGenericType then 
-            if t2.IsGenericType then 
-                if t1.GetGenericTypeDefinition() <> t2.GetGenericTypeDefinition() then 
-                    None
-                else
-                    genMatchAll (t1.GetGenericArguments()) (t2.GetGenericArguments())
-            else
-                None
-        else
-            Some [t1, [t2]]
-            
-
-
-    and genMatchAll (tps : Type seq) (args : Type seq) = 
-        let results = 
-            (tps,args) 
-            ||> Seq.map2 genMatch
-            |> Seq.fold 
-                (fun all r ->
-                    match all,r with 
-                    | None,_ -> None 
-                    | _,None -> None 
-                    | Some all, Some l -> 
-                        Some (l @ all)
-                ) (Some [])
-        match results with 
-        | Some rs ->
-            rs 
-            |> Seq.groupBy
-                (fun (t1,t2) -> t1)
-            |> Seq.map 
-                (fun (t1, ts) -> t1, ts |> Seq.toList |> List.collect snd |> List.distinct)
-            |> Seq.toList
-            |> Some
-
-        | None -> None
-    let reduceMatch (l : (Type*Type list) list) = 
-        l
-        |> List.map 
-            (fun (t,l) ->
-                match l with 
-                | [t2] -> t,t2
-                | [] -> failwithf "Unreachable"
-                | l -> t, l |> List.filter (fun x -> x <> typeof<obj>) |> List.head
-                | l -> failwithf "Multiple matches (%A) for %A" l t
-            )
-    let rec genericParameter (t : Type) = 
-        if t.IsGenericType then 
-            t.GetGenericArguments() |> Seq.exists genericParameter
-        else
-            t.IsGenericParameter
-
-    let solveGenType (gt : Type) (l : (Type * Type) list) =
-        assert (gt.IsGenericTypeDefinition)
-        try
-            let ts =  
-                gt.GetGenericArguments()
-                |> Array.map 
-                    (fun x ->
-                        l |> List.find(fun (t,_) -> t = x) |> snd
-                    )
-            gt.MakeGenericType(ts)
-        with 
-        | _ -> failwithf "Could not solve gen type %A with %A" gt l
-
-    let solveGenMeth (gt : MethodInfo) (l : (Type * Type) list) =
-        assert (gt.IsGenericMethodDefinition)
-        try
-            let ts =  
-                gt.GetGenericArguments()
-                |> Array.map 
-                    (fun x ->
-                        l |> List.find(fun (t,_) -> t = x) |> snd
-                    )
-            gt.MakeGenericMethod(ts)
-        with 
-        | _ -> failwithf "Could not solve gen type %A with %A" gt l
-    let expandOperatorsUntypedTest (expr : Expr) = 
-        let gmat q t1 t2 = 
-            match genMatchAll t1 t2 with 
-            | Some l -> reduceMatch l
-            | None -> failwithf "Could not match %A to %A in %A" t1 t2 q
-        let bindAll = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance
-        let rec loop replace expr = //strong expectedType expr = 
-            expr
-            |> UncheckedQuotations.traverseQuotation
-                (fun q -> 
-                    match q with
-                    | Patterns.Call(None, m, args) when m.IsGenericMethod ->
-                        let args = args |> List.map (loop replace)
-                        let gm = m.GetGenericMethodDefinition()
-                        let t1 = gm.GetParameters() |> Seq.map (fun x -> x.ParameterType) |> Seq.toArray
-                        let t2 = args |> Seq.map (fun x -> x.Type) |> Seq.toArray
-                        let c1 = gmat q t1 t2
-                        let c2 = gmat q [gm.ReturnType] [m.ReturnType]
-                        let c = c1 @ c2
-                        let m = solveGenMeth gm c
-                        Some(Expr.CallUnchecked(m, args))
-                    | Patterns.Call(Some(Patterns.Var vv), m, args) when Map.containsKey vv replace ->
-                        let v : Var = replace.[vv]
-                        let m = v.Type.GetMethods() |> Seq.find (fun x -> m.MetadataToken = x.MetadataToken)
-                        Some(Expr.CallUnchecked(Expr.Var v, m, args) |> loop replace)
-                    | Patterns.PropertyGet(Some(Patterns.Var vv), m, args) when Map.containsKey vv replace ->
-                        let v : Var = replace.[vv]
-                        let m = v.Type.GetProperties() |> Seq.find (fun x -> m.MetadataToken = x.MetadataToken)
-                        Some(Expr.PropertyGet(Expr.Var v, m, args) |> loop replace)
-                    | Patterns.PropertySet(Some(Patterns.Var vv), m, args, vl) when Map.containsKey vv replace ->
-                        let v : Var = replace.[vv]
-                        let m = v.Type.GetProperties() |> Seq.find (fun x -> m.MetadataToken = x.MetadataToken)
-                        Some(Expr.PropertySet(Expr.Var v, m, vl, args) |> loop replace)
-                    | Patterns.Let(var, binding, body) when var.Type.IsGenericType -> 
-                        let t = var.Type 
-                        let gt = var.Type.GetGenericTypeDefinition()
-                        let c1 = ctorContraints replace binding
-                        let c2 = useConstraints replace var body
-                        let tt = solveGenType gt (c1 @ c2)
-                        if tt = t then 
-                            Expr.Let(var, loop replace binding, loop replace body) |> Some
-                        else
-                            let v = Var(var.Name, tt, var.IsMutable)
-                            let replace = Map.add var v replace
-                            Expr.Let(v, applyCtor replace tt binding, loop replace body) |> Some
-                    | _ -> None
-                )
-        and applyCtor replace tt e = 
-            match e with 
-            | Patterns.Let(var,binding,body) -> 
-                let b2 = loop replace binding
-                if b2.Type <> binding.Type then 
-                    let v2 = Var(var.Name,b2.Type,var.IsMutable)
-                    let replace = Map.add var v2 replace
-                    Expr.Let(v2, loop replace binding, applyCtor replace tt body)
-                else
-                    Expr.Let(var, loop replace binding, applyCtor replace tt body)
-            | Patterns.NewObject(ctor, args) -> 
-                let gctor = 
-                    let i = ctor.DeclaringType.GetConstructors() |> Seq.findIndex (fun x -> x = ctor)
-                    tt.GetConstructors().[i]
-                Expr.NewObject(gctor, args |> List.map (loop replace))
-            | _ -> failwithf "39fm Unhandled %A" e
-        and useConstraints replace v e = 
-            let ra = ResizeArray()
-            let rec inner expected q = 
-                match q with
-                | Patterns.Call(Some(Patterns.Var vv), m, args) when vv = v ->
-                    let args = args |> List.map (loop replace)
-                    let gdef = v.Type.GetGenericTypeDefinition()
-                    //let i = v.Type.GetMethods(bindAll) |> Seq.findIndex (fun x -> x = m)
-                    let gm = gdef.GetMethods(bindAll) |> Seq.find (fun x -> m.Name = x.Name && x.MetadataToken = m.MetadataToken)
-                    match genMatchAll (gm.GetParameters() |> Seq.map (fun x -> x.ParameterType)) (args |> List.map (fun x -> x.Type)) with 
-                    | Some c -> 
-                        ra.Add(reduceMatch c)
-                    | None -> failwithf "Could not reconcile %A" q 
-                | Patterns.PropertyGet(Some(Patterns.Var vv), m, args) when vv = v ->
-                    let args = args |> List.map (loop replace)
-                    let gdef = v.Type.GetGenericTypeDefinition()
-                    let gm = 
-                        let i = v.Type.GetProperties(bindAll) |> Seq.findIndex (fun x -> x = m)
-                        gdef.GetProperties(bindAll).[i]
-                    match genMatch gm.PropertyType m.PropertyType with 
-                    | Some c -> 
-                        ra.Add(reduceMatch c)
-                    | None -> failwithf "Could not reconcile %A" q 
-                    match genMatchAll (gm.GetIndexParameters() |> Seq.map (fun x -> x.ParameterType)) (args |> List.map (fun x -> x.Type)) with 
-                    | Some c -> 
-                        ra.Add(reduceMatch c)
-                    | None -> failwithf "Could not reconcile args in %A" q 
-                | ShapeCombinationUnchecked(a, args) -> args |> List.iter (inner None)
-                | ShapeLambdaUnchecked(v, body) -> inner None body
-                | ShapeVarUnchecked(v) -> ()
-            inner None expr
-            ra |> Seq.concat |> Seq.toList
-           
-        and ctorContraints replace e = 
-            match e with 
-            | Patterns.Let(var,binding,body) -> 
-                let b2 = loop replace binding
-                if b2.Type <> binding.Type then 
-                    let v2 = Var(var.Name,b2.Type,var.IsMutable)
-                    let replace = Map.add var v2 replace
-                    ctorContraints replace body
-                else
-                    ctorContraints replace body
-            | Patterns.NewObject(ctor, args) -> 
-                let gdef = ctor.DeclaringType.GetGenericTypeDefinition()
-                //let gargs = gdef.GetGenericArguments()
-                //let targs = ctor.DeclaringType.GetGenericArguments()
-                let gctor = 
-                    let i = ctor.DeclaringType.GetConstructors() |> Seq.findIndex (fun x -> x = ctor)
-                    gdef.GetConstructors().[i]
-                let ps = ctor.GetParameters()
-                let gps = gctor.GetParameters()
-                let rec loop2 i flag cs nargs = 
-                    if i < args.Length then 
-                        let a = loop replace args.[i]
-                        let at = a.Type
-                        let flag = flag || (at <> ps.[i].ParameterType)
-                        if genericParameter gps.[i].ParameterType then 
-                            match genMatch gps.[i].ParameterType at with
-                            | None -> failwithf "Could not match types %A and %A in %A" gps.[i] at e
-                            | Some(l) -> 
-                                loop2 (i + 1) flag ((reduceMatch l) :: cs) (a :: nargs)
-                        else
-                            loop2 (i + 1) flag (cs) (a :: nargs)
-                    else
-                        flag,cs, nargs |> List.rev
-                match loop2 0 false [] [] with 
-                | _,cs,_ -> cs |> List.concat
-            | _ -> failwithf "39fm Unhandled %A" e
-        loop Map.empty expr
-            
-    (*   
-    let expandOperatorsUntypedTest (expr : Expr) = 
-        let bindAll = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance
-        let d = Dictionary<_,_>()
-        let replace = Dictionary<_,_>()
-        let rec loop expr = //strong expectedType expr = 
-            expr
-            |> traverseQuotation
-                (fun q -> 
-                    match q with
-                    | Patterns.Call(Some o, method, args) ->
-                        let eo = loop o
-                        if eo.Type.IsGenericType then 
-                            let gdef = eo.Type.GetGenericTypeDefinition()
-                            let i = o.Type.GetMethods(bindAll) |> Seq.findIndex (fun m -> m = method)
-                            let m = gdef.GetMethods(bindAll).[i]
-                            let eargs = args |> List.map loop
-                            let ts = eargs |> List.map (fun x -> x.Type)
-                            let matchParameters = 
-                                match genMatchAll (m.GetParameters() |> Array.map (fun x -> x.Type)) ts with 
-                                | None -> failwithf "Could not infer splice type %A in %A" q expr
-                                | Some l ->
-                                    l
-                                    |> List.choose
-                                        (fun (x,l) ->
-                                            if x.IsGenericParameter then 
-                                                if List.Length l <> 1 then 
-                                                    failwithf "Could not infer splice type %A in %A. %A could be %A" q expr x l
-                                                else
-                                                    l |> List.head |> Some
-                                            else
-                                                None
-                                        )
-                                    |> dict
-                            
-
-                        else
-                            if method.IsGenericMethod then 
-                                method.GetGenericMethodDefinition() |> Some
-                            else
-                                None
-                        
-
-
-                    | Patterns.Let(var, binding, body) when var.Type.IsGenericType ->
-                        let gdef = var.Type.GetGenericTypeDefinition()
-                        let v2 = Var(var.Name, gdef)
-                        replace.Add(var,v2)
-                        Expr.Let(v2,loop binding,loop body) |> Some
-                    | Patterns.Call(Some(Patterns.Var v), method, args) when replace.ContainsKey v -> 
-                        
-                    | _ -> None
-                )
-        loop expr
-    *)
-    
+    /// <summary>
+    /// Expand all Qit operators in expresion. Unchecked version will skip type checks when building the expression.
+    /// </summary>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
     let expandOperatorsUnchecked (expr : Expr) = 
         let rec loop inSplice expr = 
             expr
@@ -567,6 +525,11 @@ module Quote =
     let internal lunbox<'a> x : 'a = unbox x
     let internal lunboxMethod = match <@ lunbox<obj> (failwith "") @> with | Patterns.Call(_,minfo,_) -> minfo.GetGenericMethodDefinition() | _ -> failwith "lunboxMethod unreachable"
     
+    /// <summary>
+    /// Expand all Qit operators in untyped expresion.
+    /// </summary>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
     let expandOperatorsUntyped (expr : Expr) = 
         let rec loop inSplice expr = 
             expr
@@ -580,10 +543,6 @@ module Quote =
                             body.Substitute(fun x -> if x = var then Some (Expr.Value(b, binding.Type)) else None)
                             |> loop inSplice
                         b.Final(body) |> Some
-                    //| Patterns.Let(v,((Patterns.QuoteRaw(q) | Patterns.QuoteTyped(q)) as e),b) when inSplice -> 
-                    //    b.Substitute(fun i -> if i = v then Some(e) else None)
-                    //    |> loop inSplice 
-                    //    |> Some
                     | Patterns.Let(v,((Patterns.Lambda _ as r) as e),b) when inSplice -> 
                         b.Substitute(fun i -> if i = v then Some(e) else None)
                         |> loop inSplice 
@@ -621,7 +580,6 @@ module Quote =
                                         e.Substitute(fun x -> if x = v then Some a else None)
                                     ) body
                             | e -> e
-                            | _ -> failwith "Unreachable"
                         res
                         |> loop inSplice 
                         |> Some
@@ -661,9 +619,20 @@ module Quote =
             
         loop false expr
     
+
+    /// <summary>
+    /// Expand all Qit operators in Expr.
+    /// </summary>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
     let expandOperators (expr : Expr<'a>) : Expr<'a> =
         expr |> expandOperatorsUntyped |> Expr.Cast
 
+    /// <summary>
+    /// Expand all rewriters in Expr.
+    /// </summary>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
     let expandRewriters (expr : Expr) = 
         expr
         |> applySub
@@ -675,29 +644,18 @@ module Quote =
                 | _ -> None
             )
 
-    //let intoExpr (x : 'a) : Expr = <@@ () @@> //failwith "quoted code to Expr type"
-
-
-    let rec traverseQuotationUnchecked f q = UncheckedQuotations.traverseQuotation f q
-
-    let rec traverseQuotationRec f q = 
-        let rec loop q = 
-            match f q with 
-            | Some(true,q) -> loop q
-            | Some(false,q) -> q
-            | None -> q
-        let q = loop q
-        match q with
-        | ExprShape.ShapeCombination(a, args) -> 
-            let nargs = args |> List.map (traverseQuotationRec f)
-            ExprShape.RebuildShapeCombination(a, nargs)
-        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotationRec f body)
-        | ExprShape.ShapeVar(v) -> Expr.Var(v)
 
     let internal markerMethod = methodInfo <@ any "" @>
     let internal typedMarkerMethod = genericMethodInfo <@ withType "" @>
     let internal genericMethod (m : MethodInfo) = if m.IsGenericMethod then m.GetGenericMethodDefinition() else m
 
+    /// <summary>
+    /// Attempts to match two Expr trees against each other. Quote.anyType and Quote.typed<'a> markers are extracted. 
+    /// Variables starting with __ are treated as wildcards, otherwise their names must match.
+    /// </summary>
+    /// <param name="a">Expr to compare</param>
+    /// <param name="b">Expr to compare</param>
+    /// <returns>untypedMarkers:Dictionary * typedMarkers : Dictionary * matchResult : bool</returns>
     let exprMatch a b =
         let markers = Dictionary<string,Expr>()
         let typedMarkers = Dictionary<string,Expr>()
@@ -898,15 +856,16 @@ module Quote =
         let a,b,y = exprMatch e x
         if y then Some (a,b) else None
 
-    //let pipe = getGenericMethodInfo <@(|>)@>
+    /// <summary>
+    /// Expand let bindings in Expr
+    /// </summary>
+    /// <param name="vars">Var replacements</param>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Expanded Expr</returns>
     let rec expand vars expr = 
-
-      // First recursively process & replace variables
       let expanded = 
         match expr with
-        // If the variable has an assignment, then replace it with the expression
         | ExprShape.ShapeVar v when Map.containsKey v vars -> vars.[v]
-        // Apply 'expand' recursively on all sub-expressions
         | ExprShape.ShapeVar v -> Expr.Var v
         | Patterns.Call(body, DerivedPatterns.MethodWithReflectedDefinition meth, args) ->
             let this = match body with Some b -> Expr.Application(meth, b) | _ -> meth
@@ -918,37 +877,18 @@ module Quote =
             let fuck = List.map (expand vars) exprs
             let e = ExprShape.RebuildShapeCombination(o, fuck)
             e
-            
-
-      // After expanding, try reducing the expression - we can replace 'let'
-      // expressions and applications where the first argument is lambda
       match expanded with
-      //| Patterns.Let(v, Patterns.Call _, _) as expr -> expr
-      //| E <@ marker "f" |> typedMarker "g" @> (Key "f" f, Key "g" g) -> Expr.Application(g, f)
-      //| Patterns.Call(None, op, args) when op.IsGenericMethod && op.GetGenericMethodDefinition() = pipe -> 
-      //      Expr.Application(args.[1],args.[0])
       | Patterns.Application(ExprShape.ShapeLambda(v, body), assign)
       | Patterns.Let(v, assign, body) when not v.IsMutable -> expand (Map.add v (expand vars assign) vars) body
       | _ -> expanded
+    
+    let internal typeStr t = Reflection.typeToString t
 
-
-
-      
-    let rec typeStr (t : Type) = 
-        if t.IsGenericType then 
-            let targs = t.GetGenericArguments() |> Array.map typeStr
-            let name =
-                let name = t.FullName
-                let i = name.LastIndexOf "`"
-                name.Substring(0,i)
-            sprintf "%s<%s>" name (targs |> String.concat ", ")
-        else
-            t.FullName
-            
+    /// Simplified string representation of Expr
     let rec str q =
         match q with
         | AddressOf(expr) -> sprintf "&(%s)" (str expr)
-        | AddressSet(expr1, expr2) ->  failwithf "AddressSet(%s, %s)" (str expr1) (str expr2)
+        | AddressSet(expr1, expr2) -> sprintf "(%s) <- (%s)" (str expr1) (str expr2)
         | Application(expr1, Lambda(v,expr2)) ->
             let e = Expr.Let(v,expr1,expr2)
             str e
@@ -1003,10 +943,12 @@ module Quote =
             sprintf "let %s : %s = (%s) in (%s)" var.Name (typeStr var.Type) (str expr1) (str expr2)
         | NewArray(type1, exprList) -> 
             sprintf "[|%s|]" (exprList |> List.map (str >> sprintf "(%s)") |> String.concat ";")
-        | NewDelegate(type1, varList, expr) -> failwith "NewDelegate(type1, varList, expr)"
+        | NewDelegate(type1, varList, expr) -> 
+            sprintf "new %s(%s)" (typeStr type1) (varList |> List.map (fun v -> sprintf "(%s)" (v.Name)) |> String.concat ",")
         | NewObject(constructorInfo, exprList) -> 
             sprintf "(new %s(%s))"(typeStr constructorInfo.DeclaringType) (exprList |> List.map (str >> sprintf "(%s)") |> String.concat ",")
-        | NewRecord(type1, exprList) -> failwith "NewRecord(type1, exprList)"
+        | NewRecord(type1, exprList) -> 
+            sprintf "(new %s(%s))" (typeStr type1) (exprList |> List.map (str >> sprintf "(%s)") |> String.concat ",")
         | NewTuple(exprList) -> 
             sprintf "(%s)" (exprList |> List.map (str >> sprintf "(%s)") |> String.concat ",")
         | NewUnionCase(unionCaseInfo, exprList) -> 
@@ -1023,11 +965,12 @@ module Quote =
         | QuoteRaw(expr) -> sprintf "<@@ %s @@>" (str expr)
         | Sequential(expr1, expr2) -> sprintf "(%s);(%s)" (str expr1) (str expr2)
         | TryFinally(expr1, expr2) -> sprintf "(try (%s) finally (%s))" (str expr1) (str expr2)
-        | TryWith(expr1, var1, expr2, var2, expr3) -> failwith "TryWith(expr1, var1, expr2, var2, expr3)"
-        | TupleGet(expr, int1) -> failwith "TupleGet(expr, int1)"
+        | TryWith(expr1, var1, expr2, var2, expr3) -> 
+            sprintf "(try (%s) with | %s -> (%s) | %s -> (%s))" (str expr1) var1.Name (str expr2) var2.Name (str expr3)
+        | TupleGet(expr, int1) -> sprintf "(%s)[%d]" (str expr) int1
         | TypeTest(expr, type1) -> sprintf "((%s) :? %s)" (str expr) (typeStr type1)
-        | UnionCaseTest(expr, unionCaseInfo) -> failwith "UnionCaseTest(expr, unionCaseInfo)"
-        //| ValueWithName(obj1, type1, name) when List.contains name vs -> name
+        | UnionCaseTest(expr, unionCaseInfo) -> 
+            sprintf "((%s) :? %s)" (str expr) (typeStr unionCaseInfo.DeclaringType)
         | Value(obj1, type1) -> 
             if type1 = typeof<string> then
                 let s = obj1 :?> string
@@ -1043,24 +986,35 @@ module Quote =
         | WhileLoop(expr1, expr2) -> 
             sprintf "(while (%s) do (%s))" (str expr1) (str expr2)
         | x -> failwithf "%A" x
-
-
-    let rec expandLambda e = 
-        match e with 
+    /// <summary>
+    /// Will expand the application of a lambda expression to a let binding
+    /// </summary>
+    /// <param name="expr">Target Expr</param>
+    let rec expandLambda expr = 
+        match expr with 
         | Patterns.Application(ExprShape.ShapeLambda(v, body), assign) -> 
             Expr.Let(v,assign,expandLambda body)
-        | _ -> e
+        | _ -> expr
 
-    let decomposeLetBindings e =    
+    /// <summary>
+    /// Extract succesive `let` bindings from an expression
+    /// </summary>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Var*Expr bindings and body Expr</returns>
+    let decomposeLetBindings expr =    
         let rec loop acc e = 
             match e with 
             | Patterns.Let(v,ass,body) -> 
                 loop ((v,ass) :: acc) body
             | _ -> acc, e
-        loop [] e
+        loop [] expr
         
     open System.Linq.Expressions
 
+    /// <summary>
+    /// Convert Expr of a F# function to an Expression.Lambda
+    /// </summary>
+    /// <param name="x"></param>
     let toFuncExpression (x : Expr<'a>) = 
         if FSharp.Reflection.FSharpType.IsFunction typeof<'a> then 
             let rec func (m : Expression) ps = 
@@ -1083,75 +1037,48 @@ module Quote =
     let toFuncExpression7 (f : Expr<'a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h>) : Expression<Func<'a,'b,'c,'d,'e,'f,'g,'h>> = toFuncExpression f
     let toFuncExpression8 (f : Expr<'a -> 'b -> 'c -> 'd -> 'e -> 'f -> 'g -> 'h -> 'i>) : Expression<Func<'a,'b,'c,'d,'e,'f,'g,'h,'i>> = toFuncExpression f 
     
-    let spliceInExpression (e : Expression) : 'a = failwith ""
-    let spliceInExpressionTyped (e : Expression<'a>) : 'a = failwith ""
-    
-    let internal spliceMeth = (methodInfo <@ spliceInExpression @>).GetGenericMethodDefinition()
-    let internal spliceTypedMeth = (methodInfo <@ spliceInExpressionTyped @>).GetGenericMethodDefinition()
-    (*
-    let rewriteExpressionSplices (q : Expr<'a>) = 
-        let (|Quote|_|) (e : Expr) (x : Expr) = 
-            let _,_,y = exprMatch e x
-            if y then Some () else None
-        let (|BindQuote|_|) (e : Expr) (x : Expr) = 
-            let a,b,y = exprMatch e x
-            if y then Some (a,b) else None
-        let (|AnyMarker|_|) k (anyType : IDictionary<string,Expr>, typed : IDictionary<string,Expr>) = 
-            let scc,v = anyType.TryGetValue k
-            if scc then Some v else None
-        let (|TypedMarker|_|) k (anyType : IDictionary<string,Expr>, typed : IDictionary<string,Expr>) = 
-            let scc,v = typed.TryGetValue k
-            if scc then Some v else None
-        q
-        |> applySub
-            (fun l x ->
-                match x with
-                | BindQuote <@ spliceInExpression (withType "e" : Expression<AnyType>) : AnyType @> (TypedMarker "e" e)
-                | BindQuote <@ spliceInExpression (withType "e" : Expression) : AnyType @> (TypedMarker "e" e) ->
-                    let expr = evaluateUntyped e :?> Expression
-                    if expr.Type = x.Type then 
-                        None
-                    else
-                        let newq = <@ FuncConvert.FromFunc (Operators.splice x)@> |> expandSplices 
-                        Some(x,newq)
-                | _ -> None
-            )
-    *)
+    let internal linqSpliceMeth = (methodInfo <@ spliceInExpression @>).GetGenericMethodDefinition()
+    let internal linqSpliceTypedMeth = (methodInfo <@ spliceInExpressionTyped @>).GetGenericMethodDefinition()
+
     let expandExpressionSplices (e : 'e) = 
         let visitor = 
             {new ExpressionVisitor() with 
                 member x.VisitMethodCall(e : MethodCallExpression) =
-                    if e.Method.IsStatic && e.Method.IsGenericMethod && e.Method.GetGenericMethodDefinition() = spliceMeth then 
+                    if e.Method.IsStatic && e.Method.IsGenericMethod && e.Method.GetGenericMethodDefinition() = linqSpliceMeth then 
                         let a = Expression.Lambda(e.Arguments.[0],[]).Compile().DynamicInvoke() :?> Expression
-                        //let intp = a.Type
-                        //let expected = e.Method.ReturnType
-                        //if intp = expected then 
-                        //    a
-                        //else
-                        //    FuncConvert.
                         a
-                    elif e.Method.IsStatic && e.Method.IsGenericMethod && e.Method.GetGenericMethodDefinition() = spliceTypedMeth then 
+                    elif e.Method.IsStatic && e.Method.IsGenericMethod && e.Method.GetGenericMethodDefinition() = linqSpliceTypedMeth then 
                         Expression.Lambda(e.Arguments.[0],[]).Compile().DynamicInvoke() :?> Expression
                     else
                         Expression.Call(x.Visit(e.Object), e.Method, e.Arguments |> Seq.map x.Visit) :> _
             }
         visitor.VisitAndConvert<'e>(e, "expandExpressionSplices")
     
-    let rec exists f (q : Expr) = 
-        if f q then 
+    /// <summary>
+    /// Tests if any sub-Expr of the Expr satisfies the predicate 
+    /// </summary>
+    /// <param name="predicate">(Expr -> bool) to be applied to each sub-Expr</param>
+    /// <param name="expr">Target Expr</param>
+    let rec exists predicate (expr : Expr) = 
+        if predicate expr then 
             true
         else
-            match q with
-            | ShapeCombinationUnchecked(a, args) -> args |> List.exists (exists f)
-            | ShapeLambdaUnchecked(v, body) -> exists f body
+            match expr with
+            | ShapeCombinationUnchecked(a, args) -> args |> List.exists (exists predicate)
+            | ShapeLambdaUnchecked(v, body) -> exists predicate body
             | ShapeVarUnchecked(v) -> false
     
-    let rec contains k (q : Expr)  = 
-        match q with
-        | Quote k -> true
-        | ShapeCombinationUnchecked(a, args) -> args |> List.exists (contains k)
-        | ShapeLambdaUnchecked(v, body) -> contains k body
-        | ShapeVarUnchecked(v) -> false
+    /// <summary>
+    /// Tests if the Expr contains the specified Expr.
+    /// </summary>
+    /// <param name="query">Expr to search for</param>
+    /// <param name="expr">Target Expr</param>
+    let rec contains query (expr : Expr)  = 
+        match expr with
+        | Quote query -> true
+        | ShapeCombinationUnchecked(_, args) -> args |> List.exists (contains query)
+        | ShapeLambdaUnchecked(_, body) -> contains query body
+        | ShapeVarUnchecked(_) -> false
 
 
     module internal Patterns = 
@@ -1189,12 +1116,17 @@ module Quote =
             let scc,v = typed.TryGetValue k
             if scc then Some v else None  
     open Patterns
-    open Qit.ProviderImplementation.ProvidedTypes
-    open ReflectionPatterns
-    let compileLambdaWithRefs refs (q : Expr<'a>) = 
+    
+    /// <summary>
+    /// Compiles Expr on lambda into an assembly and returns the lambda. Additional assembly references can be specified.
+    /// </summary>
+    /// <param name="refs">Assembly references to include</param>
+    /// <param name="expr">Target expr</param>
+    let compileLambdaWithRefs refs (expr : Expr<'a>) = 
+        let q = expr
         let refs = 
             let ra = ResizeArray()
-            q 
+            q
             |> traverseQuotation
                 (fun x ->
                     match x with
@@ -1236,7 +1168,12 @@ module Quote =
         let r = a.GetTypes() |> Seq.head
         let mt = r.GetMethod("meth")
         FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation(build mt) :?> 'a
-    let compileLambda q = compileLambdaWithRefs [] q
+
+    /// <summary>
+    /// Compiles Expr on lambda into an assembly and returns the lambda.
+    /// </summary>
+    /// <param name="expr">Expr to compile</param>
+    let compileLambda expr = compileLambdaWithRefs [] expr
  
         
 
@@ -1257,7 +1194,7 @@ module Extensions =
 
 open Quote
 
-type TypeTemplate<'a>() =  
+type TypeTemplate<'a> private () =  
     static let cache = Dictionary<MethodInfo, Dictionary<Type list, 'a>>()
     static let tryCache minfo (types : Type list) builder = 
         let scc,lu2 = cache.TryGetValue(minfo)
@@ -1275,6 +1212,10 @@ type TypeTemplate<'a>() =
             lu2.[types] <- v
             cache.[minfo] <- lu2
             v
+    /// <summary>
+    /// Constructs a function given a generic function and a list of Type arguments
+    /// </summary>
+    /// <param name="f">Generic function to apply type arguments to</param>
     static member create ([<ReflectedDefinition(false)>] f : Expr<'a>) : Type list -> 'a  = 
         let makeMethod (minfo : MethodInfo) =
             if minfo.IsGenericMethod then
@@ -1318,12 +1259,12 @@ type TypeTemplate<'a>() =
                         FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation lambda :?> 'a)
         | _ -> failwithf "Expecting Expr.Call got: \r\n --------- \r\n %A \r\n ---------" f
 
-type ITemp<'b> =    
+type ITypeTemplate<'b> =    
     abstract member Def<'a> : unit -> 'b
 
 [<AutoOpen>]
-module ITempExt = 
-    type ITemp<'b> with 
+module TypeTemplateExt = 
+    type ITypeTemplate<'b> with 
         member x.Make (t:Type seq) = 
             let t = t |> Seq.toArray
             let t = 
@@ -1331,4 +1272,4 @@ module ITempExt =
                     [| FSharp.Reflection.FSharpType.MakeTupleType (t) |]
                 else
                     t
-            typeof<ITemp<'b>>.GetMethod("Def").MakeGenericMethod(t).Invoke(x,[||]) :?> 'b
+            typeof<ITypeTemplate<'b>>.GetMethod("Def").MakeGenericMethod(t).Invoke(x,[||]) :?> 'b
