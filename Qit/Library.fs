@@ -225,9 +225,9 @@ module QitOp =
     let internal spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
 
     /// <summary>
-    /// Splice Expr<'t> into quotation on Quote.expandOperators
+    /// Splice Expr&lt;'t&lt; into quotation on Quote.expandOperators
     /// </summary>
-    /// <param name="expr">Expr<'t> to splice in</param>
+    /// <param name="expr">Expr&lt;'t&gt; to splice in</param>
     let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_>
     let internal splice2Meth = (methodInfo <@ splice @>).GetGenericMethodDefinition()
 
@@ -239,9 +239,9 @@ module QitOp =
     let (!%) expr = splice expr
     
     /// <summary>
-    /// Splice Expr<'t> into quotation on Quote.expandOperators
+    /// Splice Expr&lt;'t&gt; into quotation on Quote.expandOperators
     /// </summary>
-    /// <param name="expr">Expr<'t> to splice in</param>
+    /// <param name="expr">Expr&lt;'t&gt; to splice in</param>
     [<ReflectedDefinition; QitOp>]
     let (!%%) expr = spliceUntyped expr
 
@@ -250,7 +250,7 @@ module QitOp =
     let internal rewriterMeth = (methodInfo <@ rewriter @>).GetGenericMethodDefinition()
 
     /// <summary>
-    /// Get field by FieldInfo. Expands to `Expr.FieldGet(<@ o @>,field)`.
+    /// Get field by FieldInfo. Expands to `Expr.FieldGet(&lt;@ o @&gt;,field)`.
     /// </summary>
     /// <param name="field">FieldInfo of field to get</param>
     /// <param name="o">Target obj</param>
@@ -265,7 +265,7 @@ module QitOp =
     let fieldGetStatic (field : FieldInfo) : 'a = !%%(Expr.FieldGet(field))
     
     /// <summary>
-    /// Set field by FieldInfo. Expands to `Expr.FieldSet(<@o@>,field,<@value@>)`.
+    /// Set field by FieldInfo. Expands to `Expr.FieldSet(&lt;@o@&gt;,field,&lt;@value@&gt;)`.
     /// </summary>
     /// <param name="field">FieldInfo of field to set</param>
     /// <param name="value">New field value</param>
@@ -275,7 +275,7 @@ module QitOp =
         !%%(Expr.FieldSet(<@o@>,field,<@value@>))
     
     /// <summary>
-    /// Set static field by FieldInfo. Expands to `Expr.FieldSet(field,<@value@>)`.
+    /// Set static field by FieldInfo. Expands to `Expr.FieldSet(field,&lt;@value@&gt;)`.
     /// </summary>
     /// <param name="field">FieldInfo of field to set</param>
     /// <param name="value">New field value</param>
@@ -284,7 +284,7 @@ module QitOp =
         !%%(Expr.FieldSet(field,<@value@>))
 
     /// <summary>
-    /// Call method by MethodInfo. Expands to `Expr.Call(<@o@>,method,args)`.
+    /// Call method by MethodInfo. Expands to `Expr.Call(&lt;@o@&gt;,method,args)`.
     /// </summary>
     /// <param name="method">MethodInfo of method to call</param>
     /// <param name="args">Method arguments</param>
@@ -328,9 +328,9 @@ module Quote =
     let toExpression (expr : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression(expr)
 
     /// <summary>
-    /// Evaluate Expr<'a>
+    /// Evaluate a ('a Expr)
     /// </summary>
-    /// <param name="expr">Expr<'a> to evaluate</param>
+    /// <param name="expr">('a Expr) to evaluate</param>
     /// <returns> Result of evaluation </returns>
     let evaluate(expr : Expr<'a>) = evaluate expr
     
@@ -650,7 +650,7 @@ module Quote =
     let internal genericMethod (m : MethodInfo) = if m.IsGenericMethod then m.GetGenericMethodDefinition() else m
 
     /// <summary>
-    /// Attempts to match two Expr trees against each other. Quote.anyType and Quote.typed<'a> markers are extracted. 
+    /// Attempts to match two Expr trees against each other. Quote.anyType and Quote.typed&lt;'a&gt; markers are extracted. 
     /// Variables starting with __ are treated as wildcards, otherwise their names must match.
     /// </summary>
     /// <param name="a">Expr to compare</param>
@@ -1181,7 +1181,6 @@ module Quote =
 module Extensions =
     open System.Linq.Expressions
     type Expression with 
-        //static member Func(f : Expr<'a>) : Expression<Func<'a>> = Quote.toFuncExpression f
         static member Func(f : Expr<'a -> 'b>) : Expression<Func<'a,'b>> = Quote.toFuncExpression f
         static member Func(f : Expr<'a -> 'b -> 'c>) : Expression<Func<'a,'b,'c>> = Quote.toFuncExpression f
         static member Func(f : Expr<'a -> 'b -> 'c -> 'd>) : Expression<Func<'a,'b,'c,'d>> = Quote.toFuncExpression f
