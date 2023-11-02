@@ -328,25 +328,25 @@ module QitOp =
     /// Used within a quotation to match an Expr of any type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
-    let any name : AnyType = failwith "marker"
+    let any (name : string) : AnyType = failwith "marker"
 
     /// <summary>
     /// Used within a quotation to match an Expr of specific type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
-    let withType<'a> name : 'a = failwith "marker"
+    let withType<'a> (name : string) : 'a = failwith "marker"
 
     /// <summary>
     /// Used within a quotation to match an Expr of any type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
-    let (!@) name = failwith "marker"
+    let (!@) (name : string) : 'a = failwith "marker"
     
     /// <summary>
     /// Used within a quotation to match an Expr of specific type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
-    let (!@@) name = failwith "marker"
+    let (!@@) (name : string) : AnyType = failwith "marker"
     
 
     

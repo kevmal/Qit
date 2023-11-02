@@ -221,8 +221,7 @@ Now that we've prefixed the variable name with `__`, the name of the variable is
 
 ### Reflection tools
 
-When creating general transformations often quoting code is no longer useful in order to use the runtime `Type` of the expr. Reflection is used to apply type arguments to methods and types and then combined using `Expr.*`. The strategy encouraged here is to create a function with types parameters, use reflection once to apply the Type arguments, and call.
-`TypeTemplate.create` is a convenience function to take a function with type parameters and return a function that takes `Type` arguments and applies them to the function. For example say we have,
+As motivation say we have,
 
 ```fsharp
 let q0 = 
@@ -235,7 +234,9 @@ let q0 =
     @>
 ```
 
-and we want to replace the `ResizeArray.Add` method calls with `ResizeArray.AddRange([arg])`. We create a function with a type parameter that is otherwise not present in the function signature.
+and we want to replace the `ResizeArray.Add` method calls with `ResizeArray.AddRange([arg])`. The strategy encouraged here is to create a function with type parameters, use reflection once to apply the Type arguments, and invoke.
+
+So we create a function with a type parameter that is otherwise not present in the function signature.
 
 ```fsharp
 let addRange0<'a> (o : Expr) (arg : Expr) = 
@@ -244,13 +245,18 @@ let addRange0<'a> (o : Expr) (arg : Expr) =
     <@@ (%ra).AddRange([%arg]) @@>
 ```
 
+```
+val addRange0<'a> : o: Expr -> arg: Expr -> Expr
+```
+
 We can then use `TypeTemplate.create` to create a function that takes `Type` arguments and applies them to `addRange0`.
 
 ```fsharp
 let addRange = TypeTemplate.create addRange0
+// addRange : Type list -> Expr -> Expr -> Expr
 ```
 
-Now instead of the typical reflection mess we can just call the new `addRange` function. The call itself is a compiled expression which is cached on the type arguments given, reducing call overhead compared to `Type.Invoke`.
+Now instead of the typical reflection mess we can just call the new `addRange` function. The call itself is a compiled expression which is cached on the type arguments given, reducing call overhead compared to `MethodInfo.Invoke`. Note: We're also introducing the operator equivalents to Quote.any (`!@@`) and Quote.withType (`!@`).
 
 ```fsharp
 let result = 
@@ -258,11 +264,13 @@ let result =
     |> Quote.traverse
         (fun q -> 
             match q with 
-            | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> 
+            | BindQuote <@ (!@"ra" : _ ResizeArray).Add(!@@"v1") @> 
                 (Marker "ra" ra & Marker "v1" v1) -> 
                     Some(addRange [v1.Type] ra v1)
             | _ -> None
         )
+
+// Did this do what we wanted? 
 
 let expected = 
     <@
@@ -276,8 +284,9 @@ let expected =
 Quote.isEquivalent result expected
 ```
 
-```
-No value returned by any evaluator
+```fsharp
+true
+
 ```
 
 If we wanted to inline this concept and forgo the caching provided by `TypeTemplate.create`, `ITypeTemplate<'ReturnType>.Def<'typeParameters>` can be used. Here `'typeParameters` would be either a single type or a tuple representing the needed type parameters. The `Make` method is used to apply the type parameters.
