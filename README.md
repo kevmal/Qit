@@ -1,6 +1,6 @@
-# Qit
+# Qit - Quotation toolkit
 
-Quotation toolkit, a collection of utilities for building, inspecting, transforming and executing F# quotations.
+A collection of utilities for building, inspecting, transforming and executing F# quotations.
 
 ## Installation
 
@@ -85,7 +85,7 @@ let rec removeTrivialIfs expr =
         )
 ```
 
-`Quote.any` is matching any expression and binding it to a name which can then be extracted with the `Marker` pattern. `Quote.traverseQuotation` traverses the quotation and applies the given function to each subexpression optionally replacing it with the result of the function.
+`Quote.any` is matching any expression and binding it to a name which can then be extracted with the `Marker` pattern. `Quote.traverse` traverses the quotation and applies the given function to each subexpression optionally replacing it with the result of the function.
 If we simply wanted to match with no binding we could have done
 
 ```fsharp

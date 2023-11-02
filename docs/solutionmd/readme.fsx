@@ -6,8 +6,8 @@
 #load "Patterns.fs"
 
 (**
-# Qit
-Quotation toolkit, a collection of utilities for building, inspecting, transforming and executing F# quotations.
+# Qit - Quotation toolkit
+A collection of utilities for building, inspecting, transforming and executing F# quotations.
 
 ## Installation 
 Install from nuget at https://www.nuget.org/packages/Qit/
@@ -83,27 +83,42 @@ let rec removeTrivialIfs expr =
     |> Quote.traverse
         (fun q -> 
             match q with 
-            | BindQuote <@if true then Quote.any "body" else Quote.any "" @> (Marker "body" body)
-            | BindQuote <@if false then Quote.any "" else Quote.any "body" @> (Marker "body" body) -> Some(removeTrivialIfs body)
+            | BindQuote <@if true then Quote.any "body" else Quote.any "" @> 
+                (Marker "body" body)
+            | BindQuote <@if false then Quote.any "" else Quote.any "body" @> 
+                (Marker "body" body) -> 
+                    Some(removeTrivialIfs body)
             | _ -> None
         )
 
-(** `Quote.any` is matching any expression and binding it to a name which can then be extracted with the `Marker` pattern. `Quote.traverseQuotation` traverses the quotation and applies the given function to each subexpression optionally replacing it with the result of the function. 
+(** `Quote.any` is matching any expression and binding it to a name which can then be extracted with the `Marker` pattern. `Quote.traverse` traverses the quotation and applies the given function to each subexpression optionally replacing it with the result of the function. 
 If we simply wanted to match with no binding we could have done
 *)
 
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.any "body" else Quote.any "" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@if true then Quote.any "body" else Quote.any "" @> -> 
+        true 
+     | _ -> false)
 (*** include-it ***)
 
 (** Again, `Quote.any` is matching any expression, but what about an expression of specific type? For that there's `Quote.withType<'t>`: *)
 
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.withType<int> "" else Quote.withType<int> "" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@if true then Quote.withType<int> "" else Quote.withType<int> "" @> -> 
+        true 
+     | _ -> false)
 (*** include-it ***)
 
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.withType<double> "" else Quote.withType<double> "" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     |Quote <@if true then Quote.withType<double> "" else Quote.withType<double> "" @> -> 
+        true 
+     | _ -> false)
 (*** include-it ***)
 
 
@@ -114,7 +129,11 @@ We used an empty string to signify that we're not interested in binding the matc
 
 
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@if true then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> 
+        true 
+     | _ -> false)
 (*** include-it ***)
 
 
@@ -128,17 +147,35 @@ let uselessIf2 =
     @>
 
 uselessIf2
-|> Quote.exists (function Quote <@if Quote.withType"" then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@ 
+        if Quote.withType"" then 
+            Quote.withType<int> "myMarker" 
+        else Quote.withType<int> "myMarker" @> -> true 
+    | _ -> false)
 (*** include-it ***)
 
 (** Variable names must also match unless prefixed with `__`. *)
 
 
-uselessIf |> Quote.exists (function Quote <@let a = Quote.any "" in Quote.any ""@> -> true | _ -> false)
+uselessIf 
+|> Quote.exists 
+    (function 
+     |Quote <@let a = Quote.any "" in Quote.any ""@> -> true 
+     | _ -> false)
 (*** include-it ***)
-uselessIf |> Quote.exists (function Quote <@let b = Quote.any "" in Quote.any ""@> -> true | _ -> false)
+uselessIf 
+|> Quote.exists 
+    (function 
+     |Quote <@let b = Quote.any "" in Quote.any ""@> -> true 
+     | _ -> false)
 (*** include-it ***)
-uselessIf |> Quote.exists (function Quote <@let __b = Quote.any "" in Quote.any ""@> -> true | _ -> false)
+uselessIf 
+|> Quote.exists 
+    (function 
+     | Quote <@let __b = Quote.any "" in Quote.any ""@> -> true 
+     | _ -> false)
 (*** include-it ***)
 
 (**
@@ -176,8 +213,9 @@ let result =
     |> Quote.traverse
         (fun q -> 
             match q with 
-            | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> (Marker "ra" ra & Marker "v1" v1) -> 
-                Some(addRange [v1.Type] ra v1)
+            | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> 
+                (Marker "ra" ra & Marker "v1" v1) -> 
+                    Some(addRange [v1.Type] ra v1)
             | _ -> None
         )
 
@@ -199,10 +237,11 @@ q0
 |> Quote.traverse
     (fun q -> 
         match q with 
-        | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> (Marker "ra" ra & Marker "v1" v1) -> 
-            { new ITypeTemplate<Expr> with 
-                member _.Def<'a>() = <@@ (%%ra : 'a ResizeArray).AddRange([%%v1]) @@>
-            }.Make [v1.Type]
-            |> Some
+        | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> 
+            (Marker "ra" ra & Marker "v1" v1) -> 
+                { new ITypeTemplate<Expr> with 
+                    member _.Def<'a>() = <@@ (%%ra : 'a ResizeArray).AddRange([%%v1]) @@>
+                }.Make [v1.Type]
+                |> Some
         | _ -> None
     )
