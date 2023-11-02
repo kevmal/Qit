@@ -20,5 +20,7 @@ jobs:
       run: dotnet tool restore
     - name: Test
       run: dotnet test
+    - name: Build (Release)
+      run: dotnet build --configuration Release --no-restore --verbosity normal
     - name: Docs
       run: dotnet fsdocs build --eval --strict --properties Configuration=Release
