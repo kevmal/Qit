@@ -153,7 +153,7 @@ uselessIf2
         if Quote.withType"" then 
             Quote.withType<int> "myMarker" 
         else Quote.withType<int> "myMarker" @> -> true 
-    | _ -> false)
+     | _ -> false)
 (*** include-it ***)
 
 (** Variable names must also match unless prefixed with `__`. *)
@@ -162,7 +162,7 @@ uselessIf2
 uselessIf 
 |> Quote.exists 
     (function 
-     |Quote <@let a = Quote.any "" in Quote.any ""@> -> true 
+     | Quote <@let a = Quote.any "" in Quote.any ""@> -> true 
      | _ -> false)
 (*** include-it ***)
 uselessIf 

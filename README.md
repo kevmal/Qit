@@ -79,8 +79,11 @@ let rec removeTrivialIfs expr =
     |> Quote.traverse
         (fun q -> 
             match q with 
-            | BindQuote <@if true then Quote.any "body" else Quote.any "" @> (Marker "body" body)
-            | BindQuote <@if false then Quote.any "" else Quote.any "body" @> (Marker "body" body) -> Some(removeTrivialIfs body)
+            | BindQuote <@if true then Quote.any "body" else Quote.any "" @> 
+                (Marker "body" body)
+            | BindQuote <@if false then Quote.any "" else Quote.any "body" @> 
+                (Marker "body" body) -> 
+                    Some(removeTrivialIfs body)
             | _ -> None
         )
 ```
@@ -90,7 +93,11 @@ If we simply wanted to match with no binding we could have done
 
 ```fsharp
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.any "body" else Quote.any "" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@if true then Quote.any "body" else Quote.any "" @> -> 
+        true 
+     | _ -> false)
 ```
 
 ```
@@ -101,7 +108,11 @@ Again, `Quote.any` is matching any expression, but what about an expression of s
 
 ```fsharp
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.withType<int> "" else Quote.withType<int> "" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@if true then Quote.withType<int> "" else Quote.withType<int> "" @> -> 
+        true 
+     | _ -> false)
 ```
 
 ```
@@ -110,7 +121,11 @@ true
 
 ```fsharp
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.withType<double> "" else Quote.withType<double> "" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     |Quote <@if true then Quote.withType<double> "" else Quote.withType<double> "" @> -> 
+        true 
+     | _ -> false)
 ```
 
 ```
@@ -122,7 +137,11 @@ We used an empty string to signify that we're not interested in binding the matc
 
 ```fsharp
 uselessIf
-|> Quote.exists (function Quote <@if true then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@if true then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> 
+        true 
+     | _ -> false)
 ```
 
 ```
@@ -140,7 +159,13 @@ let uselessIf2 =
     @>
 
 uselessIf2
-|> Quote.exists (function Quote <@if Quote.withType"" then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+|> Quote.exists 
+    (function 
+     | Quote <@ 
+        if Quote.withType"" then 
+            Quote.withType<int> "myMarker" 
+        else Quote.withType<int> "myMarker" @> -> true 
+     | _ -> false)
 ```
 
 ```
@@ -150,7 +175,11 @@ true
 Variable names must also match unless prefixed with `__`.
 
 ```fsharp
-uselessIf |> Quote.exists (function Quote <@let a = Quote.any "" in Quote.any ""@> -> true | _ -> false)
+uselessIf 
+|> Quote.exists 
+    (function 
+     | Quote <@let a = Quote.any "" in Quote.any ""@> -> true 
+     | _ -> false)
 ```
 
 ```
@@ -158,7 +187,11 @@ true
 ```
 
 ```fsharp
-uselessIf |> Quote.exists (function Quote <@let b = Quote.any "" in Quote.any ""@> -> true | _ -> false)
+uselessIf 
+|> Quote.exists 
+    (function 
+     |Quote <@let b = Quote.any "" in Quote.any ""@> -> true 
+     | _ -> false)
 ```
 
 ```
@@ -166,7 +199,11 @@ false
 ```
 
 ```fsharp
-uselessIf |> Quote.exists (function Quote <@let __b = Quote.any "" in Quote.any ""@> -> true | _ -> false)
+uselessIf 
+|> Quote.exists 
+    (function 
+     | Quote <@let __b = Quote.any "" in Quote.any ""@> -> true 
+     | _ -> false)
 ```
 
 ```
@@ -212,8 +249,9 @@ let result =
     |> Quote.traverse
         (fun q -> 
             match q with 
-            | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> (Marker "ra" ra & Marker "v1" v1) -> 
-                Some(addRange [v1.Type] ra v1)
+            | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> 
+                (Marker "ra" ra & Marker "v1" v1) -> 
+                    Some(addRange [v1.Type] ra v1)
             | _ -> None
         )
 
@@ -240,11 +278,12 @@ q0
 |> Quote.traverse
     (fun q -> 
         match q with 
-        | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> (Marker "ra" ra & Marker "v1" v1) -> 
-            { new ITypeTemplate<Expr> with 
-                member _.Def<'a>() = <@@ (%%ra : 'a ResizeArray).AddRange([%%v1]) @@>
-            }.Make [v1.Type]
-            |> Some
+        | BindQuote <@ (Quote.withType<AnyType ResizeArray> "ra").Add(Quote.any "v1") @> 
+            (Marker "ra" ra & Marker "v1" v1) -> 
+                { new ITypeTemplate<Expr> with 
+                    member _.Def<'a>() = <@@ (%%ra : 'a ResizeArray).AddRange([%%v1]) @@>
+                }.Make [v1.Type]
+                |> Some
         | _ -> None
     )
 ```
