@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
     <RepositoryUrl>https://github.com/kevmal/Qit/</RepositoryUrl>
-    <FsDocsLogoSource>img/logo.svg</FsDocsLogoSource>
+    <PackageProjectUrl>https://kevmal.github.io/Qit</PackageProjectUrl>
   </PropertyGroup>
 </Project>
