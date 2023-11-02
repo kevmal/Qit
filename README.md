@@ -185,11 +185,11 @@ uselessIf
      | _ -> false)
 ```
 
-Original code has `let a` and so it matches.
+```
+true
+```
 
-```
-Could not find reference ''
-```
+Original code has `let a` and so it matches.
 
 ```fsharp
 uselessIf 

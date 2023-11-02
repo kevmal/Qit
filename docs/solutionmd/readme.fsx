@@ -166,10 +166,10 @@ uselessIf
     (function 
      | Quote <@let a = Quote.any "" in Quote.any ""@> -> true 
      | _ -> false)
+(*** include-it ***)
 
 (** Original code has `let a` and so it matches. *)
 
-(*** include-it ***)
 uselessIf 
 |> Quote.exists 
     (function 
