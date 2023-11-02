@@ -123,7 +123,7 @@ uselessIf
 
 
 (** When binding to markers , the `Marker` pattern will extract both `Quote.any` and `Quote.withType` bindings. To be specific we could use the `AnyMarker` and `TypedMarker` patterns.
-We used an empty string to signify that we're not interested in binding the matched expression. When using named expression we expect bindings with the same name to be the same.
+We used an empty string to signify that we're not interested in binding the matched expression. When specifying a name we expect bindings with the same name to be equivalent.
 
 *)
 
@@ -136,6 +136,7 @@ uselessIf
      | _ -> false)
 (*** include-it ***)
 
+(** Looking at `uselessIf` we can see that the true/false cases are different and so the match fails. Now when they're the same:*)
 
 let uselessIf2 = 
     <@  
@@ -152,7 +153,8 @@ uselessIf2
      | Quote <@ 
         if Quote.withType"" then 
             Quote.withType<int> "myMarker" 
-        else Quote.withType<int> "myMarker" @> -> true 
+        else Quote.withType<int> "myMarker"
+       @> -> true 
      | _ -> false)
 (*** include-it ***)
 
@@ -164,6 +166,9 @@ uselessIf
     (function 
      | Quote <@let a = Quote.any "" in Quote.any ""@> -> true 
      | _ -> false)
+
+(** Original code has `let a` and so it matches. *)
+
 (*** include-it ***)
 uselessIf 
 |> Quote.exists 
@@ -171,6 +176,9 @@ uselessIf
      |Quote <@let b = Quote.any "" in Quote.any ""@> -> true 
      | _ -> false)
 (*** include-it ***)
+
+(** Original code has `let a` which does not match `let b` *)
+
 uselessIf 
 |> Quote.exists 
     (function 
@@ -178,10 +186,12 @@ uselessIf
      | _ -> false)
 (*** include-it ***)
 
+(** Now that we've prefixed the variable name with `__`, the name of the variable is no longer relevant and it matches. *)
+
 (**
 ### Reflection tools
 
-When creating general transformations often quoting code is no longer useful in order to use the runtime `Type` of the expr. Reflection is used to apply type arguments to methods and types and then combined using `Expr.*`. The strategy encouraged here is to create a function with types parameters, ure reflection once to apply the Type arguments, and call.
+When creating general transformations often quoting code is no longer useful in order to use the runtime `Type` of the expr. Reflection is used to apply type arguments to methods and types and then combined using `Expr.*`. The strategy encouraged here is to create a function with types parameters, use reflection once to apply the Type arguments, and call.
 `TypeTemplate.create` is a convenience function to take a function with type parameters and return a function that takes `Type` arguments and applies them to the function. For example say we have,
 *)
 
@@ -199,8 +209,8 @@ let q0 =
 (** and we want to replace the `ResizeArray.Add` method calls with `ResizeArray.AddRange([arg])`. We create a function with a type parameter that is otherwise not present in the function signature. *)
 
 let addRange0<'a> (o : Expr) (arg : Expr) = 
-    let ra  : 'a ResizeArray Expr = o |> Quote.typed
-    let arg : 'a Expr = arg |> Quote.typed
+    let ra  : 'a ResizeArray Expr = o |> Expr.Cast
+    let arg : 'a Expr = arg |> Expr.Cast
     <@@ (%ra).AddRange([%arg]) @@>
 
 
