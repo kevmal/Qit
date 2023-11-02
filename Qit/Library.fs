@@ -102,7 +102,17 @@ module ReflectionPatterns =
 
     
 /// Type used in pattern matching to allow for wildcard type matching.
-type AnyType = class end 
+type AnyType() = 
+    static member (+)(a:AnyType,_:AnyType) = a
+    static member (-)(a:AnyType,_:AnyType) = a
+    static member (*)(a:AnyType,_:AnyType) = a
+    static member (/)(a:AnyType,_:AnyType) = a
+    static member (&&&)(a:AnyType,_:AnyType) = a
+    static member (|||)(a:AnyType,_:AnyType) = a
+    static member (<<<)(a:AnyType,_:AnyType) = a
+
+
+
 
 
 module internal Core = 
@@ -231,6 +241,8 @@ module QitOp =
     let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_>
     let internal splice2Meth = (methodInfo <@ splice @>).GetGenericMethodDefinition()
 
+
+
     /// <summary>
     /// Splice Expr into quotation on Quote.expandOperators
     /// </summary>
@@ -312,6 +324,29 @@ module QitOp =
     /// <param name="linqExpr">Linq expression to be cpliced</param>
     let spliceInExpressionTyped (linqExpr : System.Linq.Expressions.Expression<'a>) : 'a = failwith ""
     
+    /// <summary>
+    /// Used within a quotation to match an Expr of any type.
+    /// </summary>
+    /// <param name="name">Name of the marker to later retreive the match</param>
+    let any name : AnyType = failwith "marker"
+
+    /// <summary>
+    /// Used within a quotation to match an Expr of specific type.
+    /// </summary>
+    /// <param name="name">Name of the marker to later retreive the match</param>
+    let withType<'a> name : 'a = failwith "marker"
+
+    /// <summary>
+    /// Used within a quotation to match an Expr of any type.
+    /// </summary>
+    /// <param name="name">Name of the marker to later retreive the match</param>
+    let (!@) name = failwith "marker"
+    
+    /// <summary>
+    /// Used within a quotation to match an Expr of specific type.
+    /// </summary>
+    /// <param name="name">Name of the marker to later retreive the match</param>
+    let (!@@) name = failwith "marker"
     
 
     
@@ -402,6 +437,15 @@ module Quote =
     /// <param name="f">Traversal function</param>
     /// <param name="expr">Target Expr</param>
     /// <returns>Transformed Expr</returns>
+    let traverse f expr = traverseQuotation f expr
+
+    /// <summary>
+    /// Traverse quotation applying function to each subexpression, if the function returns None the subexpression is left unchanged.
+    /// </summary>
+    /// <param name="f">Traversal function</param>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
+    [<Obsolete("Use traverse instead")>]
     let traverseQuotation f expr = traverseQuotation f expr
 
     /// <summary>
@@ -410,6 +454,15 @@ module Quote =
     /// <param name="f">Traversal function</param> 
     /// <param name="expr">Target Expr</param>
     /// <returns>Transformed Expr</returns>
+    let rec traverseUnchecked f expr = UncheckedQuotations.traverseQuotation f expr
+    
+    /// <summary>
+    /// Traverse quotation applying function to each subexpression, if the function returns None the subexpression is left unchanged. Uncheckd version skips type checks when building the Expr.
+    /// </summary>
+    /// <param name="f">Traversal function</param> 
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
+    [<Obsolete("Use traverseUnchecked instead")>]
     let rec traverseQuotationUnchecked f expr = UncheckedQuotations.traverseQuotation f expr
 
     /// <summary>
@@ -420,7 +473,7 @@ module Quote =
     /// <param name="f">Traversal function</param>
     /// <param name="expr">Target Expr</param>
     /// <returns>Transformed Expr</returns>
-    let rec traverseQuotationRec f expr = 
+    let rec traverseRecursive f expr = 
         let rec loop q = 
             match f q with 
             | Some(true,q) -> loop q
@@ -429,10 +482,21 @@ module Quote =
         let q = loop expr
         match q with
         | ExprShape.ShapeCombination(a, args) -> 
-            let nargs = args |> List.map (traverseQuotationRec f)
+            let nargs = args |> List.map (traverseRecursive f)
             ExprShape.RebuildShapeCombination(a, nargs)
-        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseQuotationRec f body)
+        | ExprShape.ShapeLambda(v, body) -> Expr.Lambda(v, traverseRecursive f body)
         | ExprShape.ShapeVar(v) -> Expr.Var(v)
+    
+    /// <summary>
+    /// Traverse quotation applying function to each subexpression, if the function returns None the subexpression is left unchanged. 
+    /// If the function returns Some(true,expr) the subexpression is replaced with expr and the traversal continues on expr.
+    /// If the function returns Some(false,expr) the subexpression is replaced with expr and the traversal stops.
+    /// </summary>
+    /// <param name="f">Traversal function</param>
+    /// <param name="expr">Target Expr</param>
+    /// <returns>Transformed Expr</returns>
+    [<Obsolete("Use traverseRecursive instead")>]
+    let rec traverseQuotationRec f expr = traverseRecursive f expr
     
     /// <summary>
     /// Replace every occurence of targetVar with replacementVar in expr.
@@ -443,7 +507,7 @@ module Quote =
     /// <returns>Transformed Expr</returns>
     let replaceVar targetVar replacementVar expr =
         expr
-        |> traverseQuotation
+        |> traverse
             (fun q -> 
                 match q with 
                 | Patterns.Var(v) when v = targetVar -> Some(replacementVar)
@@ -525,6 +589,44 @@ module Quote =
     let internal lunbox<'a> x : 'a = unbox x
     let internal lunboxMethod = match <@ lunbox<obj> (failwith "") @> with | Patterns.Call(_,minfo,_) -> minfo.GetGenericMethodDefinition() | _ -> failwith "lunboxMethod unreachable"
     
+    let internal pipeRightMethod = genericMethodInfo <@ (|>) @>
+    let internal pipeLeftMethod = genericMethodInfo <@ (<|) @>
+                
+    let internal (|PipeCall|_|) x = 
+        match x with 
+        | Patterns.Call(None,minfo,[value;f]) when minfo.IsGenericMethod && (minfo.GetGenericMethodDefinition() = pipeRightMethod || minfo.GetGenericMethodDefinition() = pipeLeftMethod) ->
+            let rec loop acc x = 
+                match x with 
+                | Patterns.Let(v,e,b) when not v.IsMutable -> loop (Map.add v e acc) b
+                | Patterns.Lambda(v,Patterns.Call(i,m,a)) -> 
+                    let a = 
+                        a 
+                        |> List.map 
+                            (fun x -> 
+                                match x with 
+                                | Patterns.Var(v) when Map.containsKey v acc -> acc.[v]
+                                | Patterns.Var(vv) when v = vv -> value
+                                | _ -> x
+                            )
+                    let varsNotAllBound = 
+                        a
+                        |> Seq.exists
+                            (fun x ->
+                                x.GetFreeVars() |> Seq.exists (fun v -> Map.containsKey v acc)
+                            )
+                    if varsNotAllBound then 
+                        None
+                    else
+                        Some(i,m,a)
+                | _ -> None
+            loop Map.empty f
+        | _ -> None
+
+    let internal (|AnyCall|_|) expr = 
+        match expr with 
+        | PipeCall(i,m,a)
+        | Patterns.Call(i,m,a) -> Some(i,m,a)
+        | _ -> None
     /// <summary>
     /// Expand all Qit operators in untyped expresion.
     /// </summary>
@@ -533,7 +635,7 @@ module Quote =
     let expandOperatorsUntyped (expr : Expr) = 
         let rec loop inSplice expr = 
             expr
-            |> traverseQuotation
+            |> traverse
                 (fun q -> 
                     match q with 
                     | Patterns.Let(var, binding, body) when typeof<QitBindingObj>.IsAssignableFrom(binding.Type) ->
@@ -558,7 +660,7 @@ module Quote =
                         |> loop inSplice 
                         |> Some
                     | Patterns.PropertyGet(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.PropertyGetterWithReflectedDefinition(meth), args) 
-                    | Patterns.Call(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.MethodWithReflectedDefinition(meth), args) -> 
+                    | AnyCall(o, Attribute (_ : QitOpAttribute) & DerivedPatterns.MethodWithReflectedDefinition(meth), args) -> 
                         let meth = meth 
                         let args = 
                             match o with 
@@ -645,9 +747,26 @@ module Quote =
             )
 
 
-    let internal markerMethod = methodInfo <@ any "" @>
-    let internal typedMarkerMethod = genericMethodInfo <@ withType "" @>
+    let internal markerMethod1 = methodInfo <@ any "" @>
+    let internal markerMethod2 = methodInfo <@ QitOp.any "" @>
+    let internal markerMethod3 = methodInfo <@ !@@ "" @>
+    let internal typedMarkerMethod1 = genericMethodInfo <@ withType "" @>
+    let internal typedMarkerMethod2 = genericMethodInfo <@ QitOp.withType "" @>
+    let internal typedMarkerMethod3 = genericMethodInfo <@ !@ "" @>
     let internal genericMethod (m : MethodInfo) = if m.IsGenericMethod then m.GetGenericMethodDefinition() else m
+
+    let internal (|MarkerMethod|_|) (m : MethodInfo) = 
+        if m = markerMethod1 then Some(None)
+        elif m = markerMethod2 then Some(None)
+        elif m = markerMethod3 then Some(None)
+        elif m.IsGenericMethod then 
+            let gm = m.GetGenericMethodDefinition() 
+            if gm = typedMarkerMethod1 then Some(Some(m.GetGenericArguments().[0]))
+            elif gm = typedMarkerMethod2 then Some(Some(m.GetGenericArguments().[0]))
+            elif gm = typedMarkerMethod3 then Some(Some(m.GetGenericArguments().[0]))
+            else None
+        else None
+
 
     /// <summary>
     /// Attempts to match two Expr trees against each other. Quote.anyType and Quote.typed&lt;'a&gt; markers are extracted. 
@@ -668,28 +787,28 @@ module Quote =
                 else    
                     id
             match (a,b) with
-            | Call (None, m, [Value (name,_)]), a 
-            | a, Call (None, m, [Value (name,_)]) when m = markerMethod -> 
-                let name = name :?> string
-                let scc, e = markers.TryGetValue(name)
-                if scc then 
-                    exprEq e a
-                else
-                    if name <> "" then markers.[name] <- a
-                    true
-            | Call (None, m, [Value (name,_)]), a 
-            | a, Call (None, m, [Value (name,_)]) when genericMethod m = typedMarkerMethod -> 
-                let name = name :?> string
-                let tp = m.GetGenericArguments().[0]
-                let scc, e = typedMarkers.TryGetValue(name)
-                if scc then 
-                    exprEq e a
-                else    
-                    if typeEq a.Type tp then
-                        if name <> "" then typedMarkers.[name] <- a
+            | Call (None, MarkerMethod(tpOpt), [Value (name,_)]), a 
+            | a, Call (None, MarkerMethod(tpOpt), [Value (name,_)]) -> 
+                match tpOpt with 
+                | None ->
+                    let name = name :?> string
+                    match markers.TryGetValue(name) with 
+                    | true, e ->
+                        exprEq e a
+                    | _ ->
+                        if name <> "" then markers.[name] <- a
                         true
-                    else
-                        false
+                | Some tp ->
+                    let name = name :?> string
+                    match typedMarkers.TryGetValue(name) with 
+                    | true, e ->
+                        exprEq e a
+                    | _ -> 
+                        if typeEq a.Type tp then
+                            if name <> "" then typedMarkers.[name] <- a
+                            true
+                        else
+                            false
             | AddressOf(e1), AddressOf(e2) -> exprEq e1 e2
             | AddressSet(a1, a2), AddressSet(b1, b2) ->  exprEq a1 b1 && exprEq a2 b2
             | Application(a1, a2), Application(b1, b2) -> exprEq a1 b1 && exprEq a2 b2
@@ -847,7 +966,16 @@ module Quote =
                 || (a.IsGenericMethod && b.IsGenericMethod && a.GetGenericMethodDefinition() = b.GetGenericMethodDefinition() && genArgsEq())
                 || checkGenericType()
         markers, typedMarkers, exprEq a b
-    
+
+    /// <summary>
+    /// Check for equivalence between Exprs.
+    /// </summary>
+    /// <param name="a">Expr to check</param>
+    /// <param name="b">Expr to check</param>
+    let isEquivalent (a : Expr) (b : Expr) = 
+        let _markers, _typedMarkers, eq = exprMatch a b
+        eq
+
     let internal (|Quote|_|) (e : Expr) (x : Expr) = 
         let _,_,y = exprMatch e x
         if y then Some () else None
@@ -1127,7 +1255,7 @@ module Quote =
         let refs = 
             let ra = ResizeArray()
             q
-            |> traverseQuotation
+            |> traverse
                 (fun x ->
                     match x with
                     | BindQuote <@ any "x" @> (AnyMarker "x" o) -> ra.Add o.Type.Assembly; None

@@ -452,6 +452,30 @@ module Basic =
             ()
         | _ -> Assert.False(true)
 
+    [<Fact>]
+    let ``BindQuote multiple matches 1``() = 
+        let uselessIf1 = 
+            <@  
+                let a = 32
+                if a > 100 then 
+                    a + 1
+                else
+                    a + 2
+            @>
+        let result1 = uselessIf1 |> Quote.exists (function Quote <@if Quote.withType"" then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+        Assert.False(result1)
+        let uselessIf2 = 
+            <@  
+                let a = 32
+                if a > 100 then 
+                    a + 1
+                else
+                    a + 1
+            @>
+        let result2 = uselessIf2 |> Quote.exists (function Quote <@if Quote.withType"" then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+        Assert.True(result2)
+
+
     //REVIEW: Should we just always match unit variables? 
     [<Fact>]
     let ``BindQuote unit lambda 1``() = 
@@ -479,21 +503,30 @@ module Basic =
             let i = <@ v @> |> Quote.evaluate
             Expr.Value (i + 1000) |> Expr.Cast
         ) 
+    [<QitOp; ReflectedDefinition>]
+    let qitOp2 (v : int) (w : int) : int = 
+        splice(
+            let i = <@ v + w @> |> Quote.evaluate
+            Expr.Value (i + 1000) |> Expr.Cast
+        ) 
 
     [<Fact>]
     let ``expand qitop``() =
         let q1 = <@ qitOp1 22 @> |> Quote.expandOperators
         Assert.Equal(q1, <@1022@>)
-        //let q2 = <@ 22 |> qitOp1@> |> Quote.expandOperators
-        //Assert.Equal(q2, <@1022@>)
+        let q2 = <@ 22 |> qitOp1@> |> Quote.expandOperators
+        Assert.Equal(q2, <@1022@>)
+        let q3 = <@ 22 |> qitOp2 2@> |> Quote.expandOperators
+        Assert.Equal(q3, <@1024@>)
 
-(*
+
     [<Fact>]
     let ``rewriter 1``() = 
+        let myRewriter (trail : Expr list) (thisCall : Expr) (eleven : Expr) = Some(thisCall, <@@ %%eleven + 2 @@>)
         let v = 
             <@
                 let a = 1
-                let b = QitOp.rewriter (11) (fun trail thisCall eleven -> Some(thisCall, <@@ !%%eleven + 2 @@> |> Quote.expandRewriters))
+                let b = QitOp.rewriter (11) myRewriter
                 b + 2
             @> 
             |> Quote.expandRewriters
@@ -502,21 +535,20 @@ module Basic =
 
     [<Fact>]
     let ``rewriter 2``() = 
+        let myRewriter (trail : Expr list) (thisCall : Expr) (eleven : Expr) = 
+            match trail with 
+            | (_ :: createTuple :: _t) -> Some(createTuple, <@@ (22, (%%eleven : int)) @@>)
+            | _ -> None
         let v = 
             <@
                 let a = 1
                 let b : int*int = 
-                    (11, QitOp.rewriter (11) 
-                        (fun l _ eleven -> 
-                            match l with 
-                            | (_ :: createTuple :: _t) -> Some(createTuple, <@@ (22, (!%%eleven : int)) @@> |> Quote.expandRewriters)
-                            | _ -> failwith "no"))
+                    (11, QitOp.rewriter (11) myRewriter)
                 b
             @> 
             |> Quote.expandRewriters
             |> Quote.evaluateUntyped
         Assert.Equal((22,11), v :?> _)
-*)              
     
 module ProvidedTypes = 
     [<Fact>]
