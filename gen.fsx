@@ -17,7 +17,7 @@ let cp from to_ =
     File.Copy(from, to_, true)
     printfn "Copied %s to %s" from to_
 
-run "dotnet" $"""fsdocs build --eval --strict --ignoreprojects --noapidocs --input {"docs" +/ "solutionmd"}"""
+run "dotnet" """fsdocs build --eval --strict --ignoreprojects --noapidocs --input solutionmd"""
 cp (__SOURCE_DIRECTORY__ +/ "output" +/ "readme.md") (__SOURCE_DIRECTORY__ +/ "README.md")
 
 

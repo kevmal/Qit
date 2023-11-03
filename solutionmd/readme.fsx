@@ -1,5 +1,5 @@
 (*** condition: prepare ***)
-#I "../../Qit"
+#I "../Qit"
 #r "nuget:FSharp.Quotations.Evaluator,2.1.0"
 #load "ProvidedTypes.fs"
 #load "Library.fs"
