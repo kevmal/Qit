@@ -40,7 +40,7 @@ jobs:
       - name: Build (Release)
         run: dotnet build --configuration Release --no-restore --verbosity normal
       - name: Docs
-        run: dotnet fsdocs build --eval --strict --properties Configuration=Release    
+        run: dotnet fsdocs build --eval --strict --properties Configuration=Release --parameters root /Qit/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v2
         with:
