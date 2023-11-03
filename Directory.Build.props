@@ -2,7 +2,7 @@
   <PropertyGroup>
     <Version>0.1.0</Version>
     <RepositoryUrl>https://github.com/kevmal/Qit/</RepositoryUrl>
-    <PackageProjectUrl>https://kevmal.github.io/Qit</PackageProjectUrl>
+    <PackageProjectUrl>https://kevmal.github.io/Qit/</PackageProjectUrl>
     <FsDocsLogoSource>img/logo.png</FsDocsLogoSource>
   </PropertyGroup>
 </Project>
