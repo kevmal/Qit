@@ -32,5 +32,5 @@ jobs:
     - name: Pack
       run: dotnet pack --configuration Release --verbosity normal
     - name: Publish nuget
-      run: dotnet nuget push "bin/packages/*.nupkg" -s https://api.nuget.org/v3/index.json -k ${{ secrets.NUGET_ORG_QIT}} --skip-duplicate
+      run: dotnet nuget push "Qit/bin/Release/Qit.*.nupkg" -s https://api.nuget.org/v3/index.json -k ${{ secrets.NUGET_ORG_QIT}} --skip-duplicate
 
