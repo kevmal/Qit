@@ -2,33 +2,32 @@
 open Qit
 open System.Linq.Expressions
 open Xunit
-open Qit.CSharp
-open Qit.Operators
 open System
 open System.Reflection
 open FSharp.Quotations
 
 module Basic = 
-    open Qit.Patterns
+    
     [<Fact>]
     let spliceInExpression1() = 
         let e = Quote.toExpression <@ 1 + 2 + 3 @>
-        let shit = 
+        let testSplice = 
             <@
-                10 - (Quote.spliceInExpression e)
+                10 - (QitOp.spliceInExpression e)
             @>
         let v =
-            shit
+            testSplice
             |> Quote.toExpression
             |> Quote.expandExpressionSplices
         let v = Assert.IsType<int>(v|> Expression.evaluate)
         Assert.Equal(4, v)
+    
     [<Fact>]
     let ``spliceInExpression Func``() = 
         let e = Expression.Func <@ fun a -> 1 + 2 + a @>
         let v = 
             <@
-                10 - ((Quote.spliceInExpressionTyped e).Invoke 3)
+                10 - ((QitOp.spliceInExpressionTyped e).Invoke 3)
             @>
             |> Quote.toExpression
             |> Quote.expandExpressionSplices
@@ -150,8 +149,6 @@ module Basic =
             |> Quote.evaluate
         Assert.Equal("A", v)
         
-
-
     [<Fact>]
     let ``splice in splice 1``() = 
         let a = 
@@ -166,8 +163,6 @@ module Basic =
             @>
         let v = a |> Quote.expandOperators |> Quote.evaluate
         Assert.Equal(32, v)
-
-        
 
     [<Fact>]
     let ``splice in splice with sides 1``() = 
@@ -212,15 +207,15 @@ module Basic =
                     let e = 
                         if p = 0 then 
                             <@ 
-                                printfn "poo1"
+                                printfn "1"
                             @>
                         else 
                             <@
-                                printfn "poo2"
+                                printfn "2"
                             @>
                     <@
                         !%e
-                        printfn "poo"
+                        printfn "0"
                         1
                     @>
                 | _ -> 
@@ -230,6 +225,7 @@ module Basic =
                         2
                     @>
             )        
+    
     [<Fact>]
     let ``splice in splice 2``() = 
         let a = <@ spliceTestFunc 1 @>
@@ -259,18 +255,17 @@ module Basic =
                 splice
                     (
                         let f a = <@ a + a @>
-                        let poo a = 
+                        let foo a = 
                             <@
                                 !%(f a)
                             @>
-                        poo (23 + 32)
+                        foo (23 + 32)
                     )
             @>
         let v = a |> Quote.expandOperators 
         Assert.Equal(<@ 55 + 55 @>, v)
         Assert.Equal(110, v|> Quote.evaluate)
 
-        
     [<Fact>]
     let ``splice unchecked 1``() = 
         let expr = 
@@ -309,7 +304,6 @@ module Basic =
         Assert.Equal((1,2,3,4), v)
          
 
-
     type TestObj2() = 
         inherit QitBindingObj()
         let mutable c = 0
@@ -337,8 +331,6 @@ module Basic =
             |> Quote.evaluate
         Assert.Equal((1,2,3,4), v)
         
-        
-
     let allInstance = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Instance
 
     type RType(tp : Type, e : Expr) = 
@@ -374,8 +366,6 @@ module Basic =
             )
         override x.Final(expr) = Expr.Let(x.GetVar(), e, expr)
 
-
-
     [<QitOp; ReflectedDefinition>]
     let makeObj (tp : Type) (parameters : 'a) : RType =         
         let e = 
@@ -398,7 +388,6 @@ module Basic =
     type TestObj(a : int) = 
         member x.Vall(b : int) = a + b
     
-        
     [<Fact>]
     let ``splice QitObj 3``() = 
         let a = 
@@ -411,98 +400,7 @@ module Basic =
             |> Quote.expandOperators
             |> Quote.evaluate
         Assert.Equal(4, a)
-        
-        
 
-
-        
-    [<Fact>]
-    let ``splice untyped 1``() = 
-        let map (f: Expr) (o: Expr) = <@@ Option.map !%%f !%%o @@>
-        let expr = map <@ fun x -> x + 1 @> <@ Some 4 @>
-        let v = 
-            expr
-            |> Quote.expandOperatorsUnchecked 
-            |> Quote.expandOperatorsUntypedTest
-            |> Quote.evaluateUntyped
-        Assert.Equal(Some 5, v :?> _)
-         
-         
-    [<Fact>]
-    let ``splice untyped 2``() = 
-        let p = <@@ 1 @@>
-        let expr = 
-            <@@
-                let ra = ResizeArray()
-                ra.Add(!%%p)
-                ra.ToArray()
-            @@>
-        let v = 
-            expr
-            |> Quote.expandOperatorsUnchecked 
-            |> Quote.expandOperatorsUntypedTest
-            |> Quote.evaluateUntyped
-        let v : int [] = Assert.IsType(v)
-        Assert.Equal(1, v.[0])
-         
-                  
-                  
-    [<Fact(Skip="Does not work yet")>]
-    let ``splice untyped 3``() = 
-        let p = <@@ 0 @@>
-        let expr = 
-                     <@@
-                         let ra = ResizeArray()
-                         ra.Add(Unchecked.defaultof<_>)
-                         ra.[0] = !%%p
-                     @@>
-        let v = 
-                     expr
-                     |> Quote.expandOperatorsUnchecked 
-                     |> Quote.expandOperatorsUntypedTest
-                     |> Quote.evaluateUntyped
-        let v : bool = Assert.IsType(v)
-        Assert.Equal(true, v)
-                  
-                           
-        
-        
-    [<Fact>]
-    let ``splice untyped property get 1``() = 
-        let p = <@@ 1 @@>
-        let expr = 
-           <@@
-               let ra = ResizeArray()
-               ra.Add(!%%p)
-               ra.[0]
-           @@>
-        let v = 
-           expr
-           |> Quote.expandOperatorsUnchecked 
-           |> Quote.expandOperatorsUntypedTest
-           |> Quote.evaluateUntyped
-        let v : int = Assert.IsType(v)
-        Assert.Equal(1, v)
-        
-        
-    [<Fact>]
-    let ``splice untyped property set 1``() = 
-        let p = <@@ 1 @@>
-        let expr = 
-           <@@
-               let ra = ResizeArray()
-               ra.Add(!%%p)
-               ra.[0] <- !%%p
-               ra.[0]
-           @@>
-        let v = 
-           expr
-           |> Quote.expandOperatorsUnchecked 
-           |> Quote.expandOperatorsUntypedTest
-           |> Quote.evaluateUntyped
-        let v : int = Assert.IsType(v)
-        Assert.Equal(1, v)
-        
     [<Fact>]
     let ``replaceVar in splice 1``() = 
         let a : Expr<int> = 
@@ -541,6 +439,7 @@ module Basic =
         member x.Yield(v : 'a []) = v
         member x.Combine(a, b) = Array.append a b
         member x.Delay(f) : 'a [] = f()
+    
     [<Fact>]
     let ``BindQuote any instance obj 3``() = 
         let a = <@ ConcatBuilder<int>() {yield 1} @>
@@ -552,6 +451,30 @@ module Basic =
         | BindQuote <@ (Quote.withType "x" : ConcatBuilder<AnyType>).Delay(Quote.withType "body") : AnyType []@> (Marker "x" x & Marker "body" b) ->
             ()
         | _ -> Assert.False(true)
+
+    [<Fact>]
+    let ``BindQuote multiple matches 1``() = 
+        let uselessIf1 = 
+            <@  
+                let a = 32
+                if a > 100 then 
+                    a + 1
+                else
+                    a + 2
+            @>
+        let result1 = uselessIf1 |> Quote.exists (function Quote <@if Quote.withType"" then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+        Assert.False(result1)
+        let uselessIf2 = 
+            <@  
+                let a = 32
+                if a > 100 then 
+                    a + 1
+                else
+                    a + 1
+            @>
+        let result2 = uselessIf2 |> Quote.exists (function Quote <@if Quote.withType"" then Quote.withType<int> "myMarker" else Quote.withType<int> "myMarker" @> -> true | _ -> false)
+        Assert.True(result2)
+
 
     //REVIEW: Should we just always match unit variables? 
     [<Fact>]
@@ -565,8 +488,6 @@ module Basic =
         | BindQuote <@ (Quote.withType "x" : ConcatBuilder<AnyType>).Delay(fun (__unitvar : unit) -> Quote.withType "body") : AnyType []@> (Marker "x" x & Marker "body" b) ->
             ()
         | _ -> Assert.False(true)
-
-        
         
     [<Fact>]
     let ``BindQuote unit lambda 2``() = 
@@ -576,11 +497,16 @@ module Basic =
             Assert.Equal(<@@ 1 @@>, x)
         | _ -> Assert.False(true)
 
-
     [<QitOp; ReflectedDefinition>]
     let qitOp1 (v : int) : int = 
         splice(
             let i = <@ v @> |> Quote.evaluate
+            Expr.Value (i + 1000) |> Expr.Cast
+        ) 
+    [<QitOp; ReflectedDefinition>]
+    let qitOp2 (v : int) (w : int) : int = 
+        splice(
+            let i = <@ v + w @> |> Quote.evaluate
             Expr.Value (i + 1000) |> Expr.Cast
         ) 
 
@@ -588,175 +514,41 @@ module Basic =
     let ``expand qitop``() =
         let q1 = <@ qitOp1 22 @> |> Quote.expandOperators
         Assert.Equal(q1, <@1022@>)
-        //let q2 = <@ 22 |> qitOp1@> |> Quote.expandOperators
-        //Assert.Equal(q2, <@1022@>)
+        let q2 = <@ 22 |> qitOp1@> |> Quote.expandOperators
+        Assert.Equal(q2, <@1022@>)
+        let q3 = <@ 22 |> qitOp2 2@> |> Quote.expandOperators
+        Assert.Equal(q3, <@1024@>)
 
 
-(*               
     [<Fact>]
     let ``rewriter 1``() = 
+        let myRewriter (trail : Expr list) (thisCall : Expr) (eleven : Expr) = Some(thisCall, <@@ %%eleven + 2 @@>)
         let v = 
             <@
                 let a = 1
-                let b = Quote.rewriter (11) (fun trail thisCall eleven -> Some(thisCall, <@@ !%%eleven + 2 @@> |> Quote.expandOperators))
+                let b = QitOp.rewriter (11) myRewriter
                 b + 2
             @> 
             |> Quote.expandRewriters
             |> Quote.evaluateUntyped
         Assert.Equal(15, v :?> _)
+
     [<Fact>]
     let ``rewriter 2``() = 
+        let myRewriter (trail : Expr list) (thisCall : Expr) (eleven : Expr) = 
+            match trail with 
+            | (_ :: createTuple :: _t) -> Some(createTuple, <@@ (22, (%%eleven : int)) @@>)
+            | _ -> None
         let v = 
             <@
                 let a = 1
                 let b : int*int = 
-                    (11, Quote.rewriter (11) 
-                        (fun l _ eleven -> 
-                            match l with 
-                            | (_ :: createTuple :: _t) -> Some(createTuple, <@@ (22, (!%%eleven : int)) @@> |> Quote.expandOperators)
-                            | _ -> failwith "no"))
+                    (11, QitOp.rewriter (11) myRewriter)
                 b
             @> 
             |> Quote.expandRewriters
             |> Quote.evaluateUntyped
         Assert.Equal((22,11), v :?> _)
-*)               
-               
-module CSharp =
-    open FSharp.Quotations
-    open Microsoft.CodeAnalysis.CSharp
-    open Microsoft.CodeAnalysis
-
-    type C() = 
-        inherit CSharpSyntaxRewriter()
-        override x.VisitEmptyStatement(_) = null |> box |> unbox
-    
-    let format (q : Expr) = 
-        let c = Quote.toCSharpString q
-        let poo = sprintf """
-            namespace ns{
-                public class tp{
-                    static void meth()
-                    {
-                        %s;
-                    }
-                }
-            }
-                """ c |> CSharpSyntaxTree.ParseText
-        use cw = new AdhocWorkspace()
-        let format x  = Formatting.Formatter.Format(x,cw)
-        C().Visit(poo.GetRoot()).NormalizeWhitespace().ToFullString().Split('\n') 
-        |> Array.map (fun x -> x.Trim('\r'))
-        |> Array.skip 6 
-        |> Array.rev
-        |> Array.skip 3
-        |> Array.rev
-        |> Array.map (fun x -> x.Substring(12))
-        |> String.concat "\r\n"
-        |> (fun x -> Diagnostics.Debug.WriteLine x; x)
-        //|> CSharpSyntaxTree.ParseText
-
-    let formatWithType (q : Expr) = 
-        let c = 
-            let a = 
-                (format q).Split('\n') 
-                |> Array.map (fun x -> x.Trim('\r'))
-            a.[a.Length - 1] <- sprintf "return %s" a.[a.Length - 1]
-            a |> String.concat "\r\n"
-        let poo = sprintf """
-            namespace ns{
-                public class tp{
-                    public static %s meth()
-                    {
-                        %s;
-                    }
-                }
-            }
-                """ (q.Type.FullName) c |> CSharpSyntaxTree.ParseText
-        use cw = new AdhocWorkspace()
-        let format x  = Formatting.Formatter.Format(x,cw)
-        C().Visit(poo.GetRoot()).NormalizeWhitespace().ToFullString()
-    let eval q = 
-        let asm = typeof<obj>.Assembly
-        let mscorlib = Microsoft.CodeAnalysis.PortableExecutableReference.CreateFromFile(asm.Location);
-        let fsharplib = Microsoft.CodeAnalysis.PortableExecutableReference.CreateFromFile(typeof<string list>.Assembly.Location);
-        let str = formatWithType q
-        let poo = str |> CSharpSyntaxTree.ParseText
-        let compilation = CSharpCompilation.Create("foo", [poo], [mscorlib; fsharplib])
-        let tmp = IO.Path.GetTempFileName() + ".dll"
-        Diagnostics.Debug.WriteLine(tmp)
-        let result = compilation.WithOptions(new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)).Emit(tmp)
-        if result.Success then 
-            let asm = Reflection.Assembly.LoadFile(tmp)
-            let t = asm.GetTypes() |> Seq.head 
-            let m = t.GetMethod("meth",BindingFlags.Static ||| BindingFlags.Public)
-            m.Invoke(null, [||])
-        else    
-            failwithf "compile fail\r\n------------------------\r\n%s\r\n------------------------" str
-
-
-    [<Fact>]
-    let ``simple expr 1``() = 
-        let q = <@ let a = 1 + 2 + 3 in 2 + a@>
-        let e = Quote.toCSharpString q
-        Assert.Equal("System.Int32 a = 1 + 2 + 3;\r\n2 + a;", e)
-        Assert.Equal(8, eval q :?> int)
-    
-    
-    [<Fact>]
-    let ``shadowing 1``() = 
-        let q = 
-            <@ 
-                let a = 1
-                let b = a
-                let a = 2
-                a + b 
-            @> |> Quote.rewriteShadowing
-        let e = q |> format
-        Assert.Equal("""System.Int32 a = 1;
-System.Int32 b = a;
-System.Int32 a__1 = 2;
-a__1 + b;""", e)
-        Assert.Equal(3, eval q :?> int)
-    
-    
-    [<Fact>]
-    let ``shadowing 2``() = 
-        let q = 
-            <@ 
-                let a = 1
-                let b = a
-                let a = 2
-                let a__1 = 100
-                a + b + a__1
-            @> |> Quote.rewriteShadowing
-        Assert.Equal(103, eval q :?> int)
-    
-    
-    [<Fact>]
-    let ``shadowing 3``() = 
-        let q = 
-            <@ 
-                let a = 1
-                let b = a
-                let a__1 = 100
-                let a = 2
-                a + b + a__1
-            @> |> Quote.rewriteShadowing
-        Assert.Equal(103, eval q :?> int)
-    
-    [<Fact(Skip="need to properly support lambdas")>] 
-    let ``shadowing 4``() = 
-        let q = 
-            <@ 
-                let f x = 
-                    let a = x
-                    let x = 2
-                    x + a
-                (f 3) + 10
-            @> |> Quote.rewriteShadowing
-        let e = q |> format
-        Assert.Equal(15, eval q :?> int)
     
 module ProvidedTypes = 
     [<Fact>]
@@ -780,7 +572,7 @@ module ProvidedTypes =
     let ``simple lambda compile with 3 different arg``() = 
         let q = <@fun a b c -> sprintf "%d%s%.1f" a b c@>
         let f = Quote.compileLambda q
-        Assert.Equal("200crap1.0", f 200 "crap" 1.0)
+        Assert.Equal("200____1.0", f 200 "____" 1.0)
     [<Fact>]
     let ``substraction 1``() = 
         let q = <@fun (a : int) (b : int) -> a - b@>
@@ -897,10 +689,7 @@ module ProvidedTypes =
         let f = Quote.compileLambda q
         let d = DateTime.Now
         Assert.Equal((TimeSpan.FromMinutes 30.0).Ticks, f 2)
-
-
-        
-        
+    
     [<Fact>]
     let ``ticks math 1``() = 
         let q = 
@@ -917,11 +706,7 @@ module ProvidedTypes =
         let f = Quote.compileLambda q
         let d = DateTime.Now
         Assert.Equal(result, f 2)
-
-
-
-
-
+    
     [<Fact>]
     let ``call field meth 1``() = 
         let q = 
@@ -936,7 +721,6 @@ module ProvidedTypes =
                let aa = TypeWithFields4(a)
                aa.A.[0].AddMinutes(3.0).Ticks
         Assert.Equal(v d 1,f d)
-
 
     [<Fact>]
     let ``call field meth 2``() = 

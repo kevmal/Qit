@@ -1,0 +1,36 @@
+name: Build and Publish
+  
+on:
+  push:
+    branches: [ "master" ]
+    tags:        
+      - v*
+  workflow_dispatch:
+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 6.0.x
+    - name: Install dependencies
+      run: dotnet restore
+    - name: Install tool dependencies
+      run: dotnet tool restore
+    - name: Build (Release)
+      run: dotnet build --configuration Release --no-restore --verbosity normal
+    - name: Build (Debug)
+      run: dotnet build --configuration Debug --no-restore --verbosity normal
+    - name: Test
+      run: dotnet test --configuration Release --no-build --verbosity normal
+    - name: Docs
+      run: dotnet fsdocs build --eval --strict --properties Configuration=Release
+    - name: Pack
+      run: dotnet pack --configuration Release --verbosity normal
+    - name: Publish nuget
+      run: dotnet nuget push "bin/packages/*.nupkg" -s https://api.nuget.org/v3/index.json -k ${{ secrets.NUGET_ORG_QIT}} --skip-duplicate
+
