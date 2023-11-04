@@ -5,7 +5,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <PackageId>Qit</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>Kevin Malenfant</Authors>
     <Description>Quotation toolkit</Description>
     <PackageProjectUrl>https://github.com/kevmal/Qit</PackageProjectUrl>
@@ -17,6 +17,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="ProvidedTypes.fsi" />
     <Compile Include="ProvidedTypes.fs" />
     <Compile Include="Library.fs" />
     <Compile Include="Patterns.fs" />

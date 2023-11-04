@@ -372,15 +372,15 @@ module Basic =
             match <@@ parameters @@> with 
             | Patterns.NewTuple(exprs) -> 
                 let ptypes = exprs |> List.map (fun x -> x.Type) |> List.toArray
-                match tp.GetConstructor(bindAll,null,ptypes,null) with
+                match tp.GetConstructor(BindingFlags.All,null,ptypes,null) with
                 | null -> failwithf "Ctor with paremters (%s) not found in %s" (ptypes |> Array.map (fun x -> x.Name) |> String.concat ",") tp.Name
                 | m -> Expr.NewObject(m, exprs) 
             | Quote <@@()@@> -> 
-                match tp.GetConstructor(bindAll,null,[||],null) with
+                match tp.GetConstructor(BindingFlags.All,null,[||],null) with
                 | null -> failwithf "Ctor with no paremters not found in %s" tp.Name
                 | m -> Expr.NewObject(m, [])
             | expr -> 
-                match tp.GetConstructor(bindAll,null,[|expr.Type|],null) with
+                match tp.GetConstructor(BindingFlags.All,null,[|expr.Type|],null) with
                 | null -> failwithf "Ctor with paremters (%s) not found in %s" expr.Type.Name tp.Name
                 | m -> Expr.NewObject(m, [expr])
         RType(tp,e)
