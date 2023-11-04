@@ -56,7 +56,12 @@ module Reflection =
             sprintf "%s<%s>" name (targs |> String.concat ", ")
         else
             t.FullName
-            
+
+[<AutoOpen>]            
+module ReflectionExt = 
+    type BindingFlags with 
+        static member All = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance
+
 module ReflectionPatterns = 
     /// <summary>
     /// Active pattern for decomposing an F# function type into its argument types and return type.
@@ -1288,7 +1293,10 @@ module Quote =
                 ProvidedMethod("meth", [], typeof<'a>, invokeCode = f q, isStatic = true), (fun mt -> Expr.Lambda(Var("", typeof<unit>), Expr.Call(mt, [])))
         t.AddMember m
         asm.AddTypes [t]
-        let ctx = ProvidedTypesContext(refs |> Seq.filter (fun x -> not x.IsDynamic) |> Seq.map (fun x -> x.Location) |> Seq.toList, [], refs |> Seq.toList)//[System.Reflection.Assembly.GetExecutingAssembly()])
+        let rt = typeof<int>.Assembly
+        let cfg = CompilerServices.TypeProviderConfig(rt.GetType >> isNull >> not)
+        cfg.ReferencedAssemblies <- refs |> Seq.filter (fun x -> not x.IsDynamic) |> Seq.map (fun x -> x.Location) |> Seq.toArray
+        let ctx = ProvidedTypesContext(cfg, [], refs |> Seq.toList)//[System.Reflection.Assembly.GetExecutingAssembly()])
         let t2 = ctx.ConvertSourceProvidedTypeDefinitionToTarget(t)
         let compiler = AssemblyCompiler(t2.Assembly :?> _, ctx)
         let bytes = compiler.Compile(false)
