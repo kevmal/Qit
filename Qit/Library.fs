@@ -8,6 +8,9 @@ open System.Collections.Generic
 open Qit.ProviderImplementation.ProvidedTypes
 open Qit.UncheckedQuotations
 
+/// <summary>
+/// Provides utilities for working with System.Linq.Expressions.
+/// </summary>
 module Expression = 
     open System.Linq.Expressions
 
@@ -105,8 +108,28 @@ module ReflectionPatterns =
             else   
                 None
 
-    
-/// Type used in pattern matching to allow for wildcard type matching.
+/// <summary>
+/// Type used in pattern matching to allow for wildcard type matching. See also <see cref="M:Qit.Quote.any"/> and <see cref="M:Qit.Quote.withType"/>.
+/// 
+/// </summary>
+///
+/// <example>
+/// The following example shows how to use the AnyType type to match a list of any type.
+/// <code>
+/// match &lt;@ [] : int list @&gt; with 
+/// | Quote &lt;@ [] : AnyType list @&gt; -> printfn "Matched!"
+/// | _ -> printfn "No Match!"
+/// </code>
+/// </example>
+///
+/// <example>
+/// Basic operator overloads allow to match generally over certain operators.
+/// <code>
+/// match &lt;@ 23.0 + 2.0 @&gt; with 
+/// | Quote &lt;@ Quote.any "a" + Quote.any "b" @&gt; -> printfn "Matched!"
+/// | _ -> printfn "No Match!"
+/// </code>
+/// </example>
 type AnyType() = 
     static member (+)(a:AnyType,_:AnyType) = a
     static member (-)(a:AnyType,_:AnyType) = a
@@ -115,10 +138,6 @@ type AnyType() =
     static member (&&&)(a:AnyType,_:AnyType) = a
     static member (|||)(a:AnyType,_:AnyType) = a
     static member (<<<)(a:AnyType,_:AnyType) = a
-
-
-
-
 
 module internal Core = 
     open FSharp.Quotations.Evaluator.QuotationEvaluationExtensions
@@ -353,16 +372,6 @@ module QitOp =
     /// <param name="name">Name of the marker to later retreive the match</param>
     let (!@@) (name : string) : AnyType = failwith "marker"
     
-
-    
-// TODO
-type IHole = 
-    abstract member Action : Expr list * Expr -> Expr*Expr
-// TODO
-type IHole<'a> = 
-    inherit IHole
-    abstract member Marker : 'a
-
 module Quote =
     /// Expr<'a> to System.Linq.Expressions.Expression
     let toExpression (expr : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression(expr)
@@ -380,14 +389,6 @@ module Quote =
     /// <param name="expr">Expr to evaluate</param>
     /// <returns> Result of evaluation </returns>
     let evaluateUntyped(expr : Expr) = evaluateUntyped expr
-    
-    /// TODO
-    let inline hole f = 
-        {new IHole<'a> with
-             member this.Action(arg2: Expr list, arg3: Expr): Expr*Expr = 
-                f arg2 arg3
-             member this.Marker: 'a = 
-                 raise (System.NotImplementedException()) }
             
     /// <summary>
     /// Used within a quotation to match an Expr of any type.
@@ -867,7 +868,7 @@ module Quote =
                 List.length exprList = List.length exprList1 &&
                     List.map2 exprEq exprList exprList1 |> List.fold (&&) true
             | NewUnionCase(unionCaseInfo, exprList), NewUnionCase(unionCaseInfo1, exprList1) -> 
-                unionCaseInfo = unionCaseInfo1 &&
+                typeEq unionCaseInfo.DeclaringType unionCaseInfo1.DeclaringType &&
                     List.length exprList = List.length exprList1 &&
                     List.map2 exprEq exprList exprList1 |> List.fold (&&) true
             | PropertyGet(exprOption, propertyInfo, exprList), PropertyGet(exprOption1, propertyInfo1, exprList1) -> 
@@ -1312,9 +1313,11 @@ module Quote =
     let compileLambda expr = compileLambdaWithRefs [] expr
  
         
-
+/// <summary>
+/// Provides extension methods on System.Linq.Expressions.Expression.
+/// </summary>
 [<AutoOpen>]
-module Extensions =
+module ExpressionExtensions =
     open System.Linq.Expressions
     type Expression with 
         static member Func(f : Expr<'a -> 'b>) : Expression<Func<'a,'b>> = Quote.toFuncExpression f
@@ -1393,6 +1396,31 @@ type TypeTemplate<'a> private () =
                         let lambda = Array.foldBack (fun x s -> Expr.Lambda(x,s)) vars body
                         FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation lambda :?> 'a)
         | _ -> failwithf "Expecting Expr.Call got: \r\n --------- \r\n %A \r\n ---------" f
+
+/// <summary>
+/// Facilitates the use of inline type parameters. For non-inline use cases, refer to <see cref="M:Qit.TypeTemplate.create"/>.
+/// </summary>
+///
+/// <example>
+/// Suppose we have an object of type obj. Let's define it for illustrative purposes:
+/// <code>
+/// let myObj = box "hi"
+/// </code>
+/// If we wish to create a function that produces a typed tuple of <c>myObj, [myObj]</c>, it would typically require tedious reflection. With `ITypeTemplate`, this can be achieved as:
+/// <code>
+/// let myNewObj =  
+///     { new ITypeTemplate&lt;obj&gt; with 
+///         member _.Def&lt;'t&gt;() =
+///             let t = myObj :?> 't
+///             t, [t]
+///     }.Make [myObj.GetType()]
+/// </code>
+/// We use <c>ITypeTemplate&lt;obj&gt;</c> since the actual returned type is <c>obj</c> (the type of <c>myNewObj</c>). The <c>Def&lt;'t&gt;</c> method defines a type parameter to work with (the actual type of <c>myObj</c>). Although <c>myNewObj</c> is of type obj, it can be used in functions/methods that accept a <c>string * (string list)</c> tuple.
+/// </example>
+///
+/// <remarks>
+/// The complexity of this approach arises from the F# limitation that doesn't allow defining functions with type parameters within another function or method. Using an interface serves as a workaround.
+/// </remarks>
 
 type ITypeTemplate<'b> =    
     abstract member Def<'a> : unit -> 'b

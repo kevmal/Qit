@@ -451,6 +451,14 @@ module Basic =
         | BindQuote <@ (Quote.withType "x" : ConcatBuilder<AnyType>).Delay(Quote.withType "body") : AnyType []@> (Marker "x" x & Marker "body" b) ->
             ()
         | _ -> Assert.False(true)
+    
+    [<Fact>]
+    let ``BindQuote any instance obj 4``() = 
+        let isMatch = 
+            match <@ [] : int list @> with 
+            | BindQuote <@ [] : AnyType list @> _ -> true
+            | _ -> false
+        Assert.True(isMatch)
 
     [<Fact>]
     let ``BindQuote multiple matches 1``() = 
