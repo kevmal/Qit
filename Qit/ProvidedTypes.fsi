@@ -85,6 +85,8 @@ type ProvidedConstructor =
     /// This method is for internal use only in the type provider SDK
     member internal GetInvokeCode: Expr list -> Expr
 
+
+/// Represents an erased provided method.
 [<Class>]
 type ProvidedMethod =
     inherit MethodInfo
@@ -394,8 +396,8 @@ type ProvidedAssembly =
 
 #endif
 
-[<Class>]
 /// Represents the context for which code is to be generated. Normally you should not need to use this directly.
+[<Class>]
 type ProvidedTypesContext = 
     
     new : config: TypeProviderConfig * assemblyReplacementMap: (string*string) list * sourceAssemblies: Assembly list -> ProvidedTypesContext
@@ -574,7 +576,11 @@ module internal AssemblyReader =
         val GetWeakReaderCache : unit -> System.Collections.Concurrent.ConcurrentDictionary<(string * string), DateTime * WeakReference<ILModuleReader>>
         val GetStrongReaderCache : unit -> System.Collections.Concurrent.ConcurrentDictionary<(string * string), DateTime * int * ILModuleReader>
 
+/// Assembly compiler for generative type providers.
 [<Class>]
 type AssemblyCompiler = 
     new : targetAssembly: ProvidedAssembly * context: ProvidedTypesContext -> AssemblyCompiler
+    /// <summary>Compiles the ProvidedAssembly under the ProvidedTypesContext</summary>
+    /// <param name="isHostedExecution">True if calling from F# Interactive. Will load the resulting assembly and set the Assembly of child ProvidedTypes.</param>
+    /// <returns>The compiled assembly as a byte array</returns>
     member Compile : isHostedExecution : bool -> byte []

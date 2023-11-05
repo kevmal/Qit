@@ -6,6 +6,9 @@ open Microsoft.FSharp.Quotations
 open Microsoft.FSharp.Quotations.Patterns
 open System.Collections.Generic
 
+/// <summary>
+/// Provides active patterns for matching and extracting information from F# quotations and reflection elements (like MethodInfo, PropertyInfo, and FieldInfo).
+/// </summary>
 [<AutoOpen>]
 module Patterns = 
     open Quote
