@@ -235,7 +235,7 @@ open ReflectionPatterns
 
 [<AutoOpen>]
 module QitOp = 
-    
+   
     /// <summary>
     /// Include typed expression as is in quotation.
     /// </summary>
@@ -281,12 +281,19 @@ module QitOp =
     [<ReflectedDefinition; QitOp>]
     let (!%%) expr = spliceUntyped expr
 
-    /// TODO
-    let rewriter (input : 'input) (f : Expr list -> Expr -> Expr -> (Expr*Expr) option) : 'a = Unchecked.defaultof<'a>
+    /// <summary>
+    /// Define a rewriter within quoted code to be expanded by Quote.expandRewriters. Rewriter is a function of type  <c>trail : Expr list * thisCall : Expr * arg : Expr -> 'a</c>
+    /// where trail is a list of expressions leading to the current expression, thisCall is the current expression and arg is the argument passed to rewrite. 
+    /// <c>rewriteFunc</c> should return <c>(oldExpr, newExpr) option</c>, <c>None</c> would simply expand to the given input, <c>Some(oldExpr,newExpr)</c> would expand to the given input
+    /// and further replace <c>oldExpr</c> with <c>newExpr</c> in the expression tree using reference equality.
+    /// </summary>
+    /// <param name="input">Input argument which is passed to <c>rewriteFunc</c></param>
+    /// <param name="rewriteFunc">Function of type <c>trail : Expr list * thisCall : Expr * arg : Expr -> 'a</c></param>
+    let rewriter (input : 'input) (rewriteFunc : Expr list -> Expr -> Expr -> (Expr*Expr) option) : 'a = Unchecked.defaultof<'a>
     let internal rewriterMeth = (methodInfo <@ rewriter @>).GetGenericMethodDefinition()
 
     /// <summary>
-    /// Get field by FieldInfo. Expands to `Expr.FieldGet(&lt;@ o @&gt;,field)`.
+    /// Get field by FieldInfo. Expands to <c>Expr.FieldGet(&lt;@ o @&gt;,field)</c>.
     /// </summary>
     /// <param name="field">FieldInfo of field to get</param>
     /// <param name="o">Target obj</param>
@@ -294,14 +301,14 @@ module QitOp =
     let fieldGet (field : FieldInfo) (o : 'a) : 'b = !%%(Expr.FieldGet(<@ o @>,field))
     
     /// <summary>
-    /// Get static field by FieldInfo. Expands to `Expr.FieldGet(field)`.
+    /// Get static field by FieldInfo. Expands to <c>Expr.FieldGet(field)</c>.
     /// </summary>
     /// <param name="field">FieldInfo of field to get</param>
     [<ReflectedDefinition; QitOp>]
     let fieldGetStatic (field : FieldInfo) : 'a = !%%(Expr.FieldGet(field))
     
     /// <summary>
-    /// Set field by FieldInfo. Expands to `Expr.FieldSet(&lt;@o@&gt;,field,&lt;@value@&gt;)`.
+    /// Set field by FieldInfo. Expands to <c>Expr.FieldSet(&lt;@o@&gt;,field,&lt;@value@&gt;)</c>.
     /// </summary>
     /// <param name="field">FieldInfo of field to set</param>
     /// <param name="value">New field value</param>
@@ -311,7 +318,7 @@ module QitOp =
         !%%(Expr.FieldSet(<@o@>,field,<@value@>))
     
     /// <summary>
-    /// Set static field by FieldInfo. Expands to `Expr.FieldSet(field,&lt;@value@&gt;)`.
+    /// Set static field by FieldInfo. Expands to <c>Expr.FieldSet(field,&lt;@value@&gt;)</c>.
     /// </summary>
     /// <param name="field">FieldInfo of field to set</param>
     /// <param name="value">New field value</param>
@@ -320,7 +327,7 @@ module QitOp =
         !%%(Expr.FieldSet(field,<@value@>))
 
     /// <summary>
-    /// Call method by MethodInfo. Expands to `Expr.Call(&lt;@o@&gt;,method,args)`.
+    /// Call method by MethodInfo. Expands to <c>Expr.Call(&lt;@o@&gt;,method,args)</c>.
     /// </summary>
     /// <param name="method">MethodInfo of method to call</param>
     /// <param name="args">Method arguments</param>
@@ -329,7 +336,7 @@ module QitOp =
     let methodCall (method : MethodInfo) (args : obj list) (o : 'a) : 'b = failwith "methodCall"
     
     /// <summary>
-    /// Call static method by MethodInfo. Expands to `Expr.Call(method,args)`.
+    /// Call static method by MethodInfo. Expands to <c>Expr.Call(method,args)</c>.
     /// </summary>
     /// <param name="method">MethodInfo of method to call</param>
     /// <param name="args">Method arguments</param>
@@ -1131,7 +1138,7 @@ module Quote =
         | _ -> expr
 
     /// <summary>
-    /// Extract succesive `let` bindings from an expression
+    /// Extract succesive <c>let</c> bindings from an expression
     /// </summary>
     /// <param name="expr">Target Expr</param>
     /// <returns>Var*Expr bindings and body Expr</returns>
@@ -1399,14 +1406,15 @@ type TypeTemplate<'a> private () =
 
 /// <summary>
 /// Facilitates the use of inline type parameters. For non-inline use cases, refer to <see cref="M:Qit.TypeTemplate.create"/>.
+///
 /// </summary>
 ///
 /// <example>
-/// Suppose we have an object of type obj. Let's define it for illustrative purposes:
+/// Suppose we have an object of type <c>obj</c>. Let's define it for illustrative purposes:
 /// <code>
 /// let myObj = box "hi"
 /// </code>
-/// If we wish to create a function that produces a typed tuple of <c>myObj, [myObj]</c>, it would typically require tedious reflection. With `ITypeTemplate`, this can be achieved as:
+/// If we wish to create a function that produces a typed tuple of <c>myObj, [myObj]</c>, it would typically require tedious reflection. With <c>ITypeTemplate</c>, this can be achieved as:
 /// <code>
 /// let myNewObj =  
 ///     { new ITypeTemplate&lt;obj&gt; with 
@@ -1415,13 +1423,12 @@ type TypeTemplate<'a> private () =
 ///             t, [t]
 ///     }.Make [myObj.GetType()]
 /// </code>
-/// We use <c>ITypeTemplate&lt;obj&gt;</c> since the actual returned type is <c>obj</c> (the type of <c>myNewObj</c>). The <c>Def&lt;'t&gt;</c> method defines a type parameter to work with (the actual type of <c>myObj</c>). Although <c>myNewObj</c> is of type obj, it can be used in functions/methods that accept a <c>string * (string list)</c> tuple.
+/// We use <c>ITypeTemplate&lt;obj&gt;</c> since the actual returned type is <c>obj</c> (the type of <c>myNewObj</c>). The <c>Def&lt;'t&gt;</c> method defines a type parameter to work with (the actual type of <c>myObj</c>). Although <c>myNewObj</c> is of type <c>obj</c>, it can be used in functions/methods that accept a <c>string * (string list)</c> tuple.
 /// </example>
 ///
 /// <remarks>
-/// The complexity of this approach arises from the F# limitation that doesn't allow defining functions with type parameters within another function or method. Using an interface serves as a workaround.
+/// Note that the complexity of this approach arises from the F# limitation that doesn't allow defining functions with type parameters within another function or method. Using an interface serves as a workaround.
 /// </remarks>
-
 type ITypeTemplate<'b> =    
     abstract member Def<'a> : unit -> 'b
 
