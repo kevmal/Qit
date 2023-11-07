@@ -280,6 +280,7 @@ type QitOpAttribute() = inherit Attribute()
 ///     printfn "Current sum %d" (2 + str.Length + 5)
 ///     2 + str.Length + 5
 /// @&gt;
+/// </code>
 /// 
 /// Had we provided an overload to the <c>Final</c> method, we could have further transformed the expression.
 /// </example>
