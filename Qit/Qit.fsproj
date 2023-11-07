@@ -8,8 +8,8 @@
     <Version>0.3.0</Version>
     <Authors>Kevin Malenfant</Authors>
     <Description>Quotation toolkit</Description>
-    <PackageProjectUrl>https://github.com/kevmal/Qit</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/kevmal/Qit</RepositoryUrl>
+    <PackageProjectUrl>https://kevmal.github.io/Qit/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/kevmal/Qit/</RepositoryUrl>
     <PackageTags>FSharp Quotations F#</PackageTags>
     <Copyright>Copyright 2023</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

@@ -401,6 +401,38 @@ module Basic =
             |> Quote.evaluate
         Assert.Equal(4, a)
 
+    type Sum() = 
+        inherit QitBindingObj()
+        let exprsToSum = ResizeArray()
+        [<QitOp; ReflectedDefinition>]
+        member x.Add(e : int) = 
+            splice (
+                exprsToSum.Add(<@e@>)
+                <@()@>
+            )
+        member x.SumExpr = 
+            if exprsToSum.Count = 0 then 
+                <@0@>
+            else 
+                exprsToSum |> Seq.reduce (fun a b -> <@ !%a + !%b @>) 
+        [<QitOp; ReflectedDefinition>]
+        member x.CurrentSum() = splice x.SumExpr
+    
+    
+    [<Fact>]
+    let ``splice QitObj 4``() = 
+        let a = 
+            <@ 
+                let a = Sum()
+                a.Add(2)
+                a.Add("my string".Length)
+                a.Add 5
+                a.CurrentSum()
+            @>
+            |> Quote.expandOperators
+            |> Quote.evaluate
+        Assert.Equal(16, a)
+
     [<Fact>]
     let ``replaceVar in splice 1``() = 
         let a : Expr<int> = 

@@ -225,14 +225,89 @@ open Core
 [<AllowNullLiteral>]
 type QitOpAttribute() = inherit Attribute()
 
-/// TODO
+/// <summary>
+/// A type that captures the variable to which it's let-bound within an expression. Typically, this type would be inherited from, and when let-bound in an expression, 
+/// the actual value would be evaluated and substituted in the body of the let-binding. The body is then expanded and passed to the <c>Final</c> method, 
+/// where the result replaces the entire let-binding.
+/// </summary>
+///
+/// <example>
+/// <code>
+/// open Qit
+/// type Sum() = 
+///     inherit QitBindingObj()
+///     let exprsToSum = ResizeArray()
+///     [&lt;QitOp; ReflectedDefinition&gt;]
+///     member x.Add(e : int) = 
+///         splice (
+///             exprsToSum.Add(&lt;@e@&gt;)
+///             &lt;@()@&gt;
+///         )
+///     member x.SumExpr = 
+///         if exprsToSum.Count = 0 then 
+///             &lt;@0@&gt;
+///         else 
+///             exprsToSum |> Seq.reduce (fun a b -> &lt;@ !%a + !%b @&gt;) 
+///     [&lt;QitOp; ReflectedDefinition&gt;]
+///     member x.CurrentSum() = splice x.SumExpr
+/// 
+/// &lt;@ 
+///     let a = Sum()
+///     a.Add(2)
+///     let str = "my string"
+///     a.Add(str.Length)
+///     printfn "Current sum %d" (a.CurrentSum())
+///     a.Add(5)
+///     printfn "Current sum %d" (a.CurrentSum())
+///     a.CurrentSum()
+/// @&gt;
+/// |> Quote.expandOperators
+/// |> Quote.evaluate
+/// 
+/// // Current sum 11
+/// // Current sum 16
+/// // val it: int = 16
+/// </code>
+/// Here we define our <c>Sum</c> type which inherits from <c>QitBindingObj</c>. Methods and properties that are used within quotations typically have the <c>QitOp</c> and <c>ReflectedDefinition</c> attributes.
+/// We use a separate <c>SumExpr</c> property since it uses quotation operators internally, and we don't want to expand those within the <c>CurrentSum</c> method, which is a <c>QitOp</c>. This is because the <c>QitOp</c> attribute
+/// means <c>Quote.expandOperators</c> will expand the call, and we don't want to expand the <c>SumExpr</c> property call.
+///
+/// The resulting expression after expansion is similar to:
+/// <code>
+/// &lt;@ 
+///     let str = "my string"
+///     printfn "Current sum %d" (2 + str.Length)
+///     printfn "Current sum %d" (2 + str.Length + 5)
+///     2 + str.Length + 5
+/// @&gt;
+/// 
+/// Had we provided an overload to the <c>Final</c> method, we could have further transformed the expression.
+/// </example>
 type QitBindingObj() = 
+    /// <summary>
+    /// An abstract method that is intended to be overridden by derived types to perform a final transformation on an expression before it replaces the let-binding.
+    /// </summary>
+    /// <param name="e">The expression to be transformed.</param>
+    /// <returns>The transformed expression.</returns>
     abstract member Final : Expr -> Expr
+
+    /// <summary>
+    /// Provides a default implementation for the <c>Final</c> method that simply returns the input expression without any transformation.
+    /// </summary>
+    /// <param name="e">The expression to be returned.</param>
+    /// <returns>The input expression.</returns>
     default x.Final(e) = e
-    member val Var : Var option = None with get,set
+
+    /// <summary>
+    /// A property that holds an optional variable which may be used by derived types to reference the variable captured by the let-binding.
+    /// </summary>
+    member val Var : Var option = None with get, set
 
 open ReflectionPatterns
 
+/// <summary>
+/// Operators to be used within quotations. 
+/// </summary>
 [<AutoOpen>]
 module QitOp = 
    
@@ -270,14 +345,14 @@ module QitOp =
     /// <summary>
     /// Splice Expr into quotation on Quote.expandOperators
     /// </summary>
-    /// <param name="expr">Expr to splice in</param>
+    /// <param name="expr"><c>Expr</c> to splice in</param>
     [<ReflectedDefinition; QitOp>]
     let (!%) expr = splice expr
     
     /// <summary>
     /// Splice Expr&lt;'t&gt; into quotation on Quote.expandOperators
     /// </summary>
-    /// <param name="expr">Expr&lt;'t&gt; to splice in</param>
+    /// <param name="expr"><c>Expr&lt;'t&gt;</c> to splice in</param>
     [<ReflectedDefinition; QitOp>]
     let (!%%) expr = spliceUntyped expr
 
@@ -293,24 +368,24 @@ module QitOp =
     let internal rewriterMeth = (methodInfo <@ rewriter @>).GetGenericMethodDefinition()
 
     /// <summary>
-    /// Get field by FieldInfo. Expands to <c>Expr.FieldGet(&lt;@ o @&gt;,field)</c>.
+    /// Get field by <c>FieldInfo</c>. Expands to <c>Expr.FieldGet(&lt;@ o @&gt;,field)</c>.
     /// </summary>
-    /// <param name="field">FieldInfo of field to get</param>
+    /// <param name="field"><c>FieldInfo</c> of field to get</param>
     /// <param name="o">Target obj</param>
     [<ReflectedDefinition; QitOp>]
     let fieldGet (field : FieldInfo) (o : 'a) : 'b = !%%(Expr.FieldGet(<@ o @>,field))
     
     /// <summary>
-    /// Get static field by FieldInfo. Expands to <c>Expr.FieldGet(field)</c>.
+    /// Get static field by <c>FieldInfo</c>. Expands to <c>Expr.FieldGet(field)</c>.
     /// </summary>
-    /// <param name="field">FieldInfo of field to get</param>
+    /// <param name="field"><c>FieldInfo</c> of field to get</param>
     [<ReflectedDefinition; QitOp>]
     let fieldGetStatic (field : FieldInfo) : 'a = !%%(Expr.FieldGet(field))
     
     /// <summary>
-    /// Set field by FieldInfo. Expands to <c>Expr.FieldSet(&lt;@o@&gt;,field,&lt;@value@&gt;)</c>.
+    /// Set field by <c>FieldInfo</c>. Expands to <c>Expr.FieldSet(&lt;@o@&gt;,field,&lt;@value@&gt;)</c>.
     /// </summary>
-    /// <param name="field">FieldInfo of field to set</param>
+    /// <param name="field"><c>FieldInfo</c> of field to set</param>
     /// <param name="value">New field value</param>
     /// <param name="o">Target obj</param>
     [<ReflectedDefinition; QitOp>]
@@ -318,16 +393,16 @@ module QitOp =
         !%%(Expr.FieldSet(<@o@>,field,<@value@>))
     
     /// <summary>
-    /// Set static field by FieldInfo. Expands to <c>Expr.FieldSet(field,&lt;@value@&gt;)</c>.
+    /// Set static field by <c>FieldInfo</c>. Expands to <c>Expr.FieldSet(field,&lt;@value@&gt;)</c>.
     /// </summary>
-    /// <param name="field">FieldInfo of field to set</param>
+    /// <param name="field"><c>FieldInfo</c> of field to set</param>
     /// <param name="value">New field value</param>
     [<ReflectedDefinition; QitOp>]
     let fieldSetStatic (field : FieldInfo) (value : 'a) : unit = 
         !%%(Expr.FieldSet(field,<@value@>))
 
     /// <summary>
-    /// Call method by MethodInfo. Expands to <c>Expr.Call(&lt;@o@&gt;,method,args)</c>.
+    /// Call method by <c>MethodInfo</c>. Expands to <c>Expr.Call(&lt;@o@&gt;,method,args)</c>.
     /// </summary>
     /// <param name="method">MethodInfo of method to call</param>
     /// <param name="args">Method arguments</param>
@@ -336,9 +411,9 @@ module QitOp =
     let methodCall (method : MethodInfo) (args : obj list) (o : 'a) : 'b = failwith "methodCall"
     
     /// <summary>
-    /// Call static method by MethodInfo. Expands to <c>Expr.Call(method,args)</c>.
+    /// Call static method by <c>MethodInfo</c>. Expands to <c>Expr.Call(method,args)</c>.
     /// </summary>
-    /// <param name="method">MethodInfo of method to call</param>
+    /// <param name="method"><c>MethodInfo</c> of method to call</param>
     /// <param name="args">Method arguments</param>
     [<ReflectedDefinition; QitOp>]
     let methodCallStatic (method : MethodInfo) (args : obj list) : 'c  = failwith "methodCall"
@@ -352,33 +427,36 @@ module QitOp =
     /// <summary>
     /// Splice linq expression
     /// </summary>
-    /// <param name="linqExpr">Linq expression to be cpliced</param>
+    /// <param name="linqExpr">Linq expression to be spliced</param>
     let spliceInExpressionTyped (linqExpr : System.Linq.Expressions.Expression<'a>) : 'a = failwith ""
     
     /// <summary>
-    /// Used within a quotation to match an Expr of any type.
+    /// Used within a quotation to match an <c>Expr</c> of any type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
     let any (name : string) : AnyType = failwith "marker"
 
     /// <summary>
-    /// Used within a quotation to match an Expr of specific type.
+    /// Used within a quotation to match an <c>Expr</c> of specific type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
     let withType<'a> (name : string) : 'a = failwith "marker"
 
     /// <summary>
-    /// Used within a quotation to match an Expr of any type.
+    /// Used within a quotation to match an <c>Expr</c> of any type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
     let (!@) (name : string) : 'a = failwith "marker"
     
     /// <summary>
-    /// Used within a quotation to match an Expr of specific type.
+    /// Used within a quotation to match an <c>Expr</c> of specific type.
     /// </summary>
     /// <param name="name">Name of the marker to later retreive the match</param>
     let (!@@) (name : string) : AnyType = failwith "marker"
     
+/// <summary>
+/// Functions for transforming, evaluation, and inspecting <c>Expr</c> and <c>Expr&lt;'a&gt;</c> objects.
+/// </summary>
 module Quote =
     /// Expr<'a> to System.Linq.Expressions.Expression
     let toExpression (expr : Expr<'a>) = FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.QuotationToExpression(expr)
