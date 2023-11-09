@@ -27,7 +27,9 @@ module Expression =
         | _ -> Expression.Lambda(expression, []).Compile().DynamicInvoke()
 
 
-
+/// <summary>
+/// Provides utilities for reflection
+/// </summary>
 module Reflection = 
     /// <summary>
     /// Decomposes an F# function type into its argument types and return type.
@@ -60,11 +62,20 @@ module Reflection =
         else
             t.FullName
 
+/// <summary>
+/// Convinience extensions for reflection
+/// </summary>
 [<AutoOpen>]            
 module ReflectionExt = 
     type BindingFlags with 
+        /// <summary>
+        /// A combination of flags that match all members.
+        /// </summary>
         static member All = BindingFlags.DeclaredOnly ||| BindingFlags.Public ||| BindingFlags.NonPublic ||| BindingFlags.Static ||| BindingFlags.Instance
 
+/// <summary>
+/// Active patterns for reflection
+/// </summary>
 module ReflectionPatterns = 
     /// <summary>
     /// Active pattern for decomposing an F# function type into its argument types and return type.
@@ -335,7 +346,7 @@ module QitOp =
     let internal spliceUntypedMeth = (methodInfo <@ spliceUntyped @>).GetGenericMethodDefinition()
 
     /// <summary>
-    /// Splice Expr&lt;'t&lt; into quotation on Quote.expandOperators
+    /// Splice an <c>Expr&lt;'t&gt;</c> into quotation on <c>Quote.expandOperators</c>
     /// </summary>
     /// <param name="expr">Expr&lt;'t&gt; to splice in</param>
     let splice (x : Expr<'a>) : 'a = Unchecked.defaultof<_>
@@ -344,14 +355,14 @@ module QitOp =
 
 
     /// <summary>
-    /// Splice Expr into quotation on Quote.expandOperators
+    /// Splice an <c>Expr</c> into quotation on Quote.expandOperators
     /// </summary>
     /// <param name="expr"><c>Expr</c> to splice in</param>
     [<ReflectedDefinition; QitOp>]
     let (!%) expr = splice expr
     
     /// <summary>
-    /// Splice Expr&lt;'t&gt; into quotation on Quote.expandOperators
+    /// Splice <c>Expr&lt;'t&gt;</c> into quotation on <c>Quote.expandOperators</c>
     /// </summary>
     /// <param name="expr"><c>Expr&lt;'t&gt;</c> to splice in</param>
     [<ReflectedDefinition; QitOp>]
