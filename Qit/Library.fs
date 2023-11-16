@@ -1429,6 +1429,9 @@ module ExpressionExtensions =
 
 open Quote
 
+/// <summary>
+/// Utility for mapping <c>System.Type</c> to type parameters of arbitrary functions.
+/// </summary>
 type TypeTemplate<'a> private () =  
     static let cache = Dictionary<MethodInfo, Dictionary<Type list, 'a>>()
     static let tryCache minfo (types : Type list) builder = 
@@ -1522,6 +1525,9 @@ type TypeTemplate<'a> private () =
 type ITypeTemplate<'b> =    
     abstract member Def<'a> : unit -> 'b
 
+/// <summary>
+/// Extension methods for <c>ITypeTemplate</c>.
+/// </summary>
 [<AutoOpen>]
 module TypeTemplateExt = 
     type ITypeTemplate<'b> with 

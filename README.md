@@ -306,4 +306,42 @@ q0
     )
 ```
 
+### Evaluation
+
+Qit references [FSharp.Quotations.Evaluator](https://fsprojects.github.io/FSharp.Quotations.Evaluator/) and
+includes [FSharp.TypeProviders.SDK](https://github.com/fsprojects/FSharp.TypeProviders.SDK/)
+to allow for evaluation of F# quotations. `Quote.evaluate` and `Quote.evaluateUntyped`
+uses [FSharp.Quotations.Evaluator](https://fsprojects.github.io/FSharp.Quotations.Evaluator/) for evaluation.
+
+```fsharp
+<@ 1 + 2 @> |> Quote.evaluate 
+```
+
+```
+3
+```
+
+```fsharp
+<@@ 1 + 2 @@> |> Quote.evaluateUntyped 
+```
+
+```
+3
+```
+
+The `Qit.ProviderImplementation` namespace is a very slighty modified version of the type provider sdk. `Quote.compileLambda` will
+generate an assembly with a method generated from the `Expr`. It then retrieves the method and builds an F# function using `FSharp.Linq.RuntimeHelpers.LeafExpressionConverter`
+that calls the method.
+
+```fsharp
+let myFunction = <@ fun () -> 1 + 2 @> |> Quote.compileLambda
+myFunction()
+```
+
+```
+3
+```
+
+The full type provider sdk can be used to generate assemblies from quotations at runtime.
+
 
