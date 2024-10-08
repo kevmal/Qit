@@ -5,7 +5,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <IsPackable>true</IsPackable>
     <PackageId>Qit</PackageId>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <Authors>Kevin Malenfant</Authors>
     <Description>Quotation toolkit</Description>
     <PackageProjectUrl>https://kevmal.github.io/Qit/</PackageProjectUrl>

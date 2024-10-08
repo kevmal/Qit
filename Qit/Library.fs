@@ -1347,7 +1347,7 @@ module Quote =
             let scc,v = typed.TryGetValue k
             if scc then Some v else None  
     open Patterns
-    
+   
     /// <summary>
     /// Compiles Expr on lambda into an assembly and returns the lambda. Additional assembly references can be specified.
     /// </summary>
@@ -1355,19 +1355,29 @@ module Quote =
     /// <param name="expr">Target expr</param>
     let compileLambdaWithRefs refs (expr : Expr<'a>) = 
         let q = expr
+        let mutable existingAsm = None
         let refs = 
             let ra = ResizeArray()
             q
             |> traverse
                 (fun x ->
                     match x with
-                    | BindQuote <@ any "x" @> (AnyMarker "x" o) -> ra.Add o.Type.Assembly; None
+                    | BindQuote <@ any "x" @> (AnyMarker "x" o) -> 
+                        match existingAsm with 
+                        | None when (o.Type.Assembly :? ProvidedAssembly) ->
+                            existingAsm <- Some (o.Type.Assembly :?> ProvidedAssembly)
+                        | _ -> ()
+                        ra.Add o.Type.Assembly
+                        None
                     | _ -> None
                 )
             |> ignore
             Seq.append ra refs |> Seq.distinct |> Seq.toArray
-        let asm = ProvidedAssembly()
-        let t = ProvidedTypeDefinition(asm,"ns","tp",Some typeof<obj>,isErased=false)
+        let asm = 
+            match existingAsm with 
+            | Some asm -> asm 
+            | None -> ProvidedAssembly() 
+        let t = ProvidedTypeDefinition(asm,"ns__","tp",Some typeof<obj>,isErased=false)
         let m, build = 
             let rec f q (args : Expr list) = 
                 match q,args with 
@@ -1399,7 +1409,7 @@ module Quote =
         let compiler = AssemblyCompiler(t2.Assembly :?> _, ctx)
         let bytes = compiler.Compile(false)
         let a = System.Reflection.Assembly.Load(bytes)
-        let r = a.GetTypes() |> Seq.head
+        let r = a.GetTypes() |> Seq.find (fun x -> x.FullName = "ns__.tp")
         let mt = r.GetMethod("meth")
         FSharp.Linq.RuntimeHelpers.LeafExpressionConverter.EvaluateQuotation(build mt) :?> 'a
 

@@ -780,3 +780,126 @@ module ProvidedTypes =
                 |> DateTime
         Assert.Equal(v d 0.0 45.0 1.0,f d 0.0 45.0 1.0)
 
+    open Qit.ProviderImplementation.ProvidedTypes
+    open Qit.UncheckedQuotations
+    
+    [<Fact>]
+    let ``use constructed type 1``() = 
+        let asm = ProvidedAssembly()
+        let tp = ProvidedTypeDefinition(asm, "TestNamespace","TestClass", Some typeof<obj>, isErased = false)
+        asm.AddTypes [tp]
+        let objField = ProvidedField("anInteger", typeof<int>)
+        tp.AddMembers [objField]
+        objField.SetFieldAttributes(FieldAttributes.Assembly)
+        let inpObj = ProvidedParameter("anInt", typeof<int>)
+        let ctor = ProvidedConstructor([inpObj],  invokeCode = fun args -> Expr.FieldSet(args.[0], objField, args.[1]) )
+        tp.AddMembers [ctor]
+        let inpObj2 = ProvidedParameter("anInt", typeof<int>)
+        let objMethod = ProvidedMethod("Add", [inpObj2], typeof<int>, invokeCode = fun args -> <@@ %%(Expr.FieldGet(args.[0], objField)) + (%%(args.[1]) : int) @@>)
+        tp.AddMembers [objMethod]
+        let lambdaUntyped = 
+            let a = Var("a", typeof<int>)
+            let param1 = Expr.Var(a)
+            let b = Var("b", typeof<int>)
+            let param2 = Expr.Var(b)
+            let t = Var("t", tp)
+            Expr.Lambda(a,
+                Expr.Lambda(b,
+                    Expr.Let(t,
+                        Expr.NewObjectUnchecked(ctor, [param1]),
+                        Expr.CallUnchecked(Expr.Var(t), objMethod, [param2])
+                    )
+                )
+            )
+        let lambda : Expr<int -> int -> int> = <@ %%lambdaUntyped @>
+        let f = Quote.compileLambda lambda 
+        Assert.Equal(3, f 1 2)
+
+
+    [<Fact>]
+    let ``use constructed type access anno record 1``() = 
+        let asm = ProvidedAssembly()
+        let tp = ProvidedTypeDefinition(asm, "TestNamespace","TestClass", Some typeof<obj>, isErased = false)
+        asm.AddTypes [tp]
+        let anonType = {| a = 32 |}
+        let t = anonType.GetType()
+        let p = t.GetProperty("a")
+        let objField = ProvidedField("anInteger", t)
+        tp.AddMembers [objField]
+        objField.SetFieldAttributes(FieldAttributes.Assembly)
+        let inpObj = ProvidedParameter("anObj", t)
+        let ctor = ProvidedConstructor([inpObj], invokeCode = fun args -> 
+            Expr.FieldSet(args.[0], objField, args.[1]))
+        tp.AddMembers [ctor]
+        let inpObj2 = ProvidedParameter("anInt", typeof<int>)
+        let objMethod = ProvidedMethod("Add", [inpObj2], typeof<int>, invokeCode = fun args -> 
+            <@@ %%(Expr.PropertyGet(Expr.FieldGet(args.[0], objField),p)) + (%%(args.[1]) : int) @@>)
+        tp.AddMembers [objMethod]
+        let lambdaUntyped = 
+            let a = Var("a", t)
+            let param1 = Expr.Var(a)
+            let b = Var("b", typeof<int>)
+            let param2 = Expr.Var(b)
+            let t = Var("t", tp)
+            Expr.Lambda(a,
+                Expr.Lambda(b,
+                    Expr.Let(t,
+                        Expr.NewObjectUnchecked(ctor, [param1]),
+                        Expr.CallUnchecked(Expr.Var(t), objMethod, [param2])
+                    )
+                )
+            )
+        let lambda : Expr<{| a: int |} -> int -> int> = <@ %%lambdaUntyped @>
+        let f = Quote.compileLambda lambda 
+        Assert.Equal(35, f anonType 3)
+
+
+
+    [<Fact>]
+    let ``use constructed type access anno record 2``() = 
+        let asm = ProvidedAssembly()
+        let tp = ProvidedTypeDefinition(asm, "TestNamespace","TestClass", Some typeof<obj>, isErased = false)
+        asm.AddTypes [tp]
+        let anonType = 
+            {| 
+                Date = DateTime(2020,1,1)
+                DateOption = Some(DateTime(2020,1,1))
+                Open = 1.0M
+                Name = "Jow"
+                NameOption = Some("Jow")
+                Tuple = (1,2)
+            |}
+        let t = anonType.GetType()
+        let objField = ProvidedField("backingObj", t)
+        objField.SetFieldAttributes(FieldAttributes.Assembly)
+        tp.AddMembers [objField]
+        let inpObj = ProvidedParameter("anObj", t)
+        let ctor = ProvidedConstructor([inpObj], invokeCode = fun args -> 
+            Expr.FieldSet(args.[0], objField, args.[1]))
+        tp.AddMembers [ctor]
+        let properties = t.GetProperties()
+        for p in properties do
+            let prop = ProvidedProperty(p.Name, p.PropertyType, getterCode = fun args -> 
+                Expr.PropertyGet(Expr.FieldGet(args.[0], objField), p))
+            tp.AddMember(prop)
+
+        let lambdaUntyped = 
+            let a = Var("a", t)
+            let param1 = Expr.Var(a)
+            let t = Var("t", tp)
+            Expr.Lambda(a,
+                Expr.Let(t,
+                    Expr.NewObjectUnchecked(ctor, [param1]),
+                    Expr.PropertyGet(Expr.Var(t), tp.GetProperty("Date"))
+                )
+            )
+        let lambda : Expr<{| 
+            Date: DateTime
+            DateOption: DateTime option
+            Open: decimal
+            Name: string
+            NameOption: string option
+            Tuple: int * int
+        |} -> DateTime> = <@ %%lambdaUntyped @>
+        let f = Quote.compileLambda lambda 
+        Assert.Equal(DateTime(2020,1,1), f anonType)

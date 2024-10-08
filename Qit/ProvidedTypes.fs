@@ -3261,8 +3261,6 @@ module AssemblyReader =
           systemRuntimeScopeRef: ILScopeRef }
         override __.ToString() = "<ILGlobals>"
 
-    [<AutoOpen>]
-
     [<Struct>]
     type ILTableName(idx: int) =
         member __.Index = idx
@@ -9159,6 +9157,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
             let table = (if toTgt then typeTableFwd else typeTableBwd)
             match table.TryGetValue(t) with
             | true, newT -> newT
+            | _ when t.Name.StartsWith("<>f__AnonymousType") -> t
             | false, _ ->
                 match t with 
                 | :? ProvidedTypeDefinition as ptd when toTgt -> 
@@ -9192,6 +9191,7 @@ namespace Qit.ProviderImplementation.ProvidedTypes
             let table = (if toTgt then typeTableFwd else typeTableBwd)
             match table.TryGetValue(t) with
             | true, newT -> newT
+            | _ when t.Name.StartsWith("<>f__AnonymousType") -> t
             | false, _ ->
                 if t :? ProvidedTypeSymbol && (t :?> ProvidedTypeSymbol).IsFSharpTypeAbbreviation then t
                 // Types annotated with units-of-measure
